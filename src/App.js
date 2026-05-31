@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-route
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Profile from './pages/Profile';
+import DailyVisitForm from './pages/DailyVisitForm';
+import MobikwikWithdrawForm from './pages/MobikwikWithdrawForm';
 
 const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:4001';
 
@@ -72,6 +74,8 @@ export default function App() {
       <Routes>
         <Route path="/"                  element={<Login />} />
         <Route path="/dashboard"         element={<PrivateRoute><Dashboard /></PrivateRoute>} />
+        <Route path="/daily-visit"       element={<PrivateRoute><DailyVisitForm /></PrivateRoute>} />
+        <Route path="/mobikwik-withdraw" element={<PrivateRoute><MobikwikWithdrawForm /></PrivateRoute>} />
         <Route path="/profile"           element={<PrivateRoute><Profile /></PrivateRoute>} />
         <Route path="*"                  element={<Navigate to="/" replace />} />
       </Routes>
