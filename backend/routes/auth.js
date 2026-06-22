@@ -157,23 +157,29 @@ router.get('/profile', verifyToken, async (req, res) => {
 // GET /api/auth/check-tidebt-access
 router.get('/check-tidebt-access', verifyToken, async (req, res) => {
   try {
-    const employee = await Employee.findById(req.user.id).select('newJoinerName');
+    const employee = await Employee.findById(req.user.id).select('newJoinerName email newJoinerEmailId');
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
     const db = mongoose.connection.db;
     const TideBTAccess = db.collection('TideBT_Access');
     const employeeName = employee.newJoinerName.trim();
+    const employeeEmail = (employee.email || employee.newJoinerEmailId || '').trim().toLowerCase();
+    const escape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+    // Match by name OR by email stored in TideBT_Access
     const accessRecord = await TideBTAccess.findOne({
-      fseName: { $regex: new RegExp(`^${employeeName}$`, 'i') },
-      hasTideBTAccess: true
+      hasTideBTAccess: true,
+      $or: [
+        { fseName: { $regex: new RegExp(`^\\s*${escape(employeeName)}\\s*$`, 'i') } },
+        { fseEmail: { $regex: new RegExp(`^\\s*${escape(employeeEmail)}\\s*$`, 'i') } }
+      ]
     });
 
     if (accessRecord) {
-      return res.json({ hasAccess: true, record: accessRecord });
+      return res.json({ hasTideBTAccess: true, record: accessRecord });
     }
 
-    res.json({ hasAccess: false });
+    res.json({ hasTideBTAccess: false });
   } catch (err) {
     console.error('Check TideBT access error:', err.message);
     res.status(500).json({ message: err.message });
@@ -281,16 +287,25 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
     const db = mongoose.connection.db;
     const TideBTPayments = db.collection('TideBT_Payments');
     const empName = employee.newJoinerName.trim();
+    const empEmail = (employee.email || employee.newJoinerEmailId || '').trim();
 
     const nameSet = new Set([empName]);
 
+    // Look up TideBT_Access by email first (handles name mismatches like FASHAL ALI → Faisal Khan)
+    if (empEmail) {
+      const accessByEmail = await db.collection('TideBT_Access').find({
+        fseEmail: { $regex: new RegExp(`^${empEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+      }).toArray();
+      accessByEmail.forEach(r => { if (r.fseName) nameSet.add(r.fseName.trim()); });
+    }
+
+    // Also try first word name match in TideBT_Access
     const firstWord = empName.split(' ')[0];
     const accessRecords = await db.collection('TideBT_Access').find({
       fseName: { $regex: new RegExp(firstWord, 'i') }
     }).toArray();
     accessRecords.forEach(r => { if (r.fseName) nameSet.add(r.fseName.trim()); });
 
-    const empEmail = (employee.email || employee.newJoinerEmailId || '').trim();
     if (empEmail) {
       const adminEmp = await db.collection('Employees').findOne({
         $or: [

@@ -112,8 +112,9 @@ export default function Login() {
 
   const handleSelectTideBT = () => {
     setShowTidePopup(false);
-    alert('Tide BT Dashboard is coming soon! 🚀\n\nYou will be redirected to the Tide dashboard for now.');
-    navigate('/dashboard');
+    const token = localStorage.getItem('token');
+    const tideBTUrl = process.env.REACT_APP_TIDEBT_URL || 'http://localhost:3005';
+    window.location.href = `${tideBTUrl}?token=${encodeURIComponent(token)}`;
   };
 
   return (
