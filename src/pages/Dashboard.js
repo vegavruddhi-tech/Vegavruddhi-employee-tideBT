@@ -638,12 +638,6 @@ export default function Dashboard() {
                 : '–',
               icon: '⌛', color: '#6b21a8', bg: '#f3e8ff'
             },
-            {
-              label: 'Team BT',
-              value: teamPerformance ? `₹${(teamPerformance.btCompleted || 0).toLocaleString()}` : '–',
-              icon: '👥', color: '#2e7d32', bg: '#e6f4ea',
-              sublabel: teamPerformance?.teamTarget ? `Target: ₹${teamPerformance.teamTarget.toLocaleString()}` : null
-            },
           ].map(stat => (
             <div 
               key={stat.label} 
