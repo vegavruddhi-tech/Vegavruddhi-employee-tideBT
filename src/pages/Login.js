@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import TideSelectionPopup from '../components/TideSelectionPopup';
 
 // Use existing backend (port 4000) for authentication
-const AUTH_API_BASE = 'http://localhost:4000';
+const AUTH_API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:4001';
 const GOOGLE_CLIENT_ID = '175231524136-39m136pat1dpous6u9eijhfulpmpms1i.apps.googleusercontent.com';
 
 export default function Login() {
@@ -34,20 +34,37 @@ export default function Login() {
   const handleSignIn = () => {
     setError('');
     if (!window.google) { setError('Google Sign-In not loaded. Please refresh.'); return; }
+    
+    // Use OAuth2 popup flow directly — more reliable than One Tap/FedCM
+    const client = window.google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: 'openid email profile',
+      callback: () => {}, // not used for id_token flow
+    });
+    
+    // Use id flow instead
     window.google.accounts.id.initialize({
       client_id: GOOGLE_CLIENT_ID,
-      callback:  onCredential,
-      ux_mode:   'popup',
+      callback: onCredential,
+      ux_mode: 'popup',
+      use_fedcm_for_prompt: false,
     });
-    window.google.accounts.id.prompt((n) => {
-      if (n.isNotDisplayed() || n.isSkippedMoment()) {
-        const div = document.createElement('div');
-        div.style.display = 'none';
-        document.body.appendChild(div);
-        window.google.accounts.id.renderButton(div, { type: 'standard' });
-        div.querySelector('div[role=button]')?.click();
-      }
-    });
+    
+    // Directly render and click a hidden button — bypasses One Tap/FedCM
+    const container = document.getElementById('g-signin-container');
+    if (container) {
+      container.innerHTML = '';
+      window.google.accounts.id.renderButton(container, {
+        type: 'standard',
+        size: 'large',
+        theme: 'outline',
+        text: 'signin_with',
+      });
+      setTimeout(() => {
+        const btn = container.querySelector('div[role=button]') || container.querySelector('iframe');
+        if (btn) btn.click();
+      }, 100);
+    }
   };
 
   const onCredential = async (response) => {
@@ -146,6 +163,9 @@ export default function Login() {
             </svg>
             {loading ? 'Signing in…' : 'Sign in with Google'}
           </button>
+
+          {/* Hidden container for Google Sign-In button */}
+          <div id="g-signin-container" style={{ display: 'none' }} />
 
           <div style={{ marginTop: 24, padding: '14px 16px', background: '#f0f7f3', borderRadius: 10, borderLeft: '3px solid #1a4731', textAlign: 'left' }}>
             <p style={{ fontSize: 12, color: '#4a7060', lineHeight: 1.6 }}>

@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 
-const PROFILE_API_BASE = 'http://localhost:4000';
+const PROFILE_API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:4001';
 
 const MERCHANT_CATEGORY_OPTIONS = [
   'Bike Rider', 'Small Merchant', 'Hawker', 'Free Lancer', 'Teacher', 'Skill Employer', 'Others'
@@ -77,6 +77,10 @@ export default function DailyVisitForm() {
 
     if (!merchantName) { setError('Please enter Merchant Name.'); return; }
     if (!merchantNumber) { setError('Please enter Merchant Mobile Number.'); return; }
+    if (!/^\d{10}$/.test(merchantNumber)) {
+      setError('Merchant Mobile Number must be exactly 10 digits.');
+      return;
+    }
     if (!merchantOpinion) { setError('Please select Merchant Opinion.'); return; }
     if (isOnboarding && !onboardingStatus) { setError('Please select Onboarding Status.'); return; }
     if (isOnboarding && !merchantEmailId) { setError('Please enter Merchant Email ID.'); return; }
@@ -137,7 +141,18 @@ export default function DailyVisitForm() {
             </FormField>
 
             <FormField label="Merchant Mobile Number" required>
-              <input type="tel" value={merchantNumber} onChange={e => setMerchantNumber(e.target.value)} placeholder="Your answer" style={inputStyle} />
+              <input 
+                type="tel" 
+                value={merchantNumber} 
+                onChange={e => {
+                  const val = e.target.value.replace(/\D/g, '');
+                  if (val.length <= 10) {
+                    setMerchantNumber(val);
+                  }
+                }} 
+                placeholder="Your answer" 
+                style={inputStyle} 
+              />
             </FormField>
 
             <FormField label="Merchant Opinion" required>

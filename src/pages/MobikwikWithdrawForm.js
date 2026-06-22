@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 
-const PROFILE_API_BASE = 'http://localhost:4000';
+const PROFILE_API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:4001';
 
 const REASON_OPTIONS = [
   'Tide Error/Bass Error',
@@ -71,9 +71,12 @@ export default function MobikwikWithdrawForm() {
 
     if (!merchantName) { setError('Please enter Merchant Name.'); return; }
     if (!merchantNumber) { setError('Please enter Merchant Number.'); return; }
+    if (!/^\d{10}$/.test(merchantNumber)) {
+      setError('Merchant Number must be exactly 10 digits.');
+      return;
+    }
     if (!transactionDate) { setError('Please select Transaction Date.'); return; }
     if (!withdrawAmount) { setError('Please enter Withdraw Amount.'); return; }
-    if (!withdrawFees) { setError('Please enter Withdraw Fees.'); return; }
     if (!reasonOfWithdraw) { setError('Please select Reason of Withdraw.'); return; }
     if (reasonOfWithdraw === 'Other' && !otherReason) { setError('Please enter the reason.'); return; }
 
@@ -131,7 +134,18 @@ export default function MobikwikWithdrawForm() {
             </FormField>
 
             <FormField label="Merchant Number" required>
-              <input type="tel" value={merchantNumber} onChange={e => setMerchantNumber(e.target.value)} placeholder="Your answer" style={inputStyle} />
+              <input 
+                type="tel" 
+                value={merchantNumber} 
+                onChange={e => {
+                  const val = e.target.value.replace(/\D/g, '');
+                  if (val.length <= 10) {
+                    setMerchantNumber(val);
+                  }
+                }} 
+                placeholder="Your answer" 
+                style={inputStyle} 
+              />
             </FormField>
           </FormCard>
 
@@ -142,10 +156,6 @@ export default function MobikwikWithdrawForm() {
 
             <FormField label="Withdraw Amount" required>
               <input type="number" value={withdrawAmount} onChange={e => setWithdrawAmount(e.target.value)} placeholder="Your answer" style={inputStyle} />
-            </FormField>
-
-            <FormField label="Withdraw Fees" required>
-              <input type="number" value={withdrawFees} onChange={e => setWithdrawFees(e.target.value)} placeholder="Your answer" style={inputStyle} />
             </FormField>
           </FormCard>
 

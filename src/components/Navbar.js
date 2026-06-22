@@ -45,6 +45,7 @@ export default function Navbar({ emp, token }) {
               <div className="dh-email">{emp?.email || '–'}</div>
             </div>
             <a href="/dashboard" onClick={e => { e.preventDefault(); navigate('/dashboard'); }}>🏠&nbsp; Dashboard</a>
+            <a href="/my-merchants" onClick={e => { e.preventDefault(); navigate('/my-merchants'); }}>🏪&nbsp; My Merchants</a>
             <a href="/profile" onClick={e => { e.preventDefault(); navigate('/profile'); }}>👤&nbsp; My Profile</a>
             <a href="#logout" className="logout" onClick={logout}>🚪&nbsp; Logout</a>
           </div>

@@ -4,7 +4,7 @@ import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 
 // Use port 4000 for profile API (existing Tide backend)
-const PROFILE_API_BASE = 'http://localhost:4000';
+const PROFILE_API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:4001';
 
 export default function Profile() {
   const navigate = useNavigate();
@@ -95,6 +95,10 @@ const openCamera = async () => {
     setPfErr(''); setPfOk(''); setProfModal(true);
   };
   const sendProfRequest = async () => {
+    if (pf.newJoinerPhone && !/^\d{10}$/.test(pf.newJoinerPhone)) {
+      setPfErr('Phone number must be exactly 10 digits.');
+      return;
+    }
     if (!pf.reason?.trim()) { setPfErr('Reason is required.'); return; }
     setPfSaving(true); setPfErr('');
     try {
@@ -695,9 +699,13 @@ const openCamera = async () => {
                     <input
                       type={type}
                       value={pf[key]}
-                      onChange={(e) =>
-                        setPf((f) => ({ ...f, [key]: e.target.value }))
-                      }
+                      onChange={(e) => {
+                        let value = e.target.value;
+                        if (key === 'newJoinerPhone') {
+                          value = value.replace(/\D/g, '').slice(0, 10);
+                        }
+                        setPf((f) => ({ ...f, [key]: value }));
+                      }}
                       style={{
                         width: "100%",
                         padding: "10px 14px",

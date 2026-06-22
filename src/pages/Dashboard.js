@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 
-// Use existing backend (port 4000) for profile data
-const PROFILE_API_BASE = 'http://localhost:4000';
+const PROFILE_API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:4001';
+
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -12,57 +13,458 @@ export default function Dashboard() {
   const [emp, setEmp] = useState(null);
   const [myForms, setMyForms] = useState([]);
   const [expandedForm, setExpandedForm] = useState(null);
+  const [amountRange, setAmountRange] = useState('');
+  const [formTab, setFormTab] = useState('onboard');
   const [receivedPayments, setReceivedPayments] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [rewardPassData, setRewardPassData] = useState([]);
+  const [myTarget, setMyTarget] = useState(null);
+  const [expenseAmount, setExpenseAmount] = useState('');
+  const [expensePurpose, setExpensePurpose] = useState('');
+  const [expenseLoading, setExpenseLoading] = useState(false);
+  const [btPerf, setBtPerf] = useState(null); // BT performance from BT_TL_CONNECT MAY
+  const [pendingTab, setPendingTab] = useState('bt');
+  const [teamPerformance, setTeamPerformance] = useState(null);
 
-  // Load profile from existing backend
-  useEffect(() => {
-    if (!token) {
-      navigate('/');
-      return;
-    }
-    
-    fetch(`${PROFILE_API_BASE}/api/auth/profile`, { 
-      headers: { Authorization: 'Bearer ' + token } 
-    })
-      .then(r => { 
-        if (r.status === 401) { 
-          localStorage.clear(); 
-          navigate('/'); 
-        } 
-        return r.json(); 
+  // Selected KPI for bottom sheet details
+  const [activeKpi, setActiveKpi] = useState(null);
+
+  // Date filter state — default to all data, user can filter by month
+  const [dateFilter, setDateFilter] = useState('all');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
+  const [selectedMonth, setSelectedMonth] = useState(new Date().toLocaleString('en-US', { month: 'long' }));
+  const filterByDate = useCallback((items, dateField = 'createdAt') => {
+    const now = new Date();
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+    return items.filter(item => {
+      const raw = item[dateField];
+      if (!raw) return true;
+      const d = new Date(raw);
+      if (isNaN(d)) return true;
+
+      if (dateFilter === 'today') {
+        const todayStr = now.toISOString().split('T')[0];
+        return d.toISOString().split('T')[0] === todayStr;
+
+      } else if (dateFilter === 'month') {
+        const yr = selectedYear ? parseInt(selectedYear) : now.getFullYear();
+        const monthIdx = selectedMonth ? MONTH_NAMES.indexOf(selectedMonth) : now.getMonth();
+        const targetMonth = monthIdx >= 0 ? monthIdx : now.getMonth();
+        const ms = new Date(yr, targetMonth, 1);
+        const me = new Date(yr, targetMonth + 1, 0, 23, 59, 59, 999);
+        return d >= ms && d <= me;
+
+      } else if (dateFilter === 'custom') {
+        if (fromDate) { const f = new Date(fromDate); if (!isNaN(f) && d < f) return false; }
+        if (toDate)   { const t = new Date(toDate + 'T23:59:59'); if (!isNaN(t) && d > t) return false; }
+        return true;
+
+      } else {
+        // 'all' — apply year and/or month dropdowns
+        if (selectedYear && d.getFullYear() !== parseInt(selectedYear)) return false;
+        if (selectedMonth && MONTH_NAMES[d.getMonth()] !== selectedMonth) return false;
+        return true;
+      }
+    });
+  }, [dateFilter, fromDate, toDate, selectedYear, selectedMonth]);
+
+  const filteredForms       = useMemo(() => filterByDate(myForms),         [myForms,         filterByDate]);
+  const filteredPayments    = useMemo(() => filterByDate(receivedPayments),  [receivedPayments, filterByDate]);
+  const filteredExpenses    = useMemo(() => filterByDate(expenses),          [expenses,         filterByDate]);
+  const filteredRewardPass  = useMemo(() => filterByDate(rewardPassData, 'dateOfWorking'), [rewardPassData, filterByDate]);
+
+  // ── KPI calculations ──────────────────────────────────────────────────────
+  // All calculations use filtered data — month-wise consistent
+  const totalFund    = useMemo(() => filteredPayments.reduce((s, p) => s + (p.amount || 0), 0), [filteredPayments]);
+  // Use btPerf (BT_TL_CONNECT MAY) when available, fallback to TideBT_RewardPass
+  const fundUsedBT   = useMemo(() => btPerf ? (btPerf.btAmount || 0) : filteredRewardPass.reduce((s, r) => s + (r.totalBTAmount || 0), 0), [filteredRewardPass, btPerf]);
+  const totalRPCount = useMemo(() => btPerf ? (btPerf.rewardPassCount || 0) : filteredRewardPass.reduce((s, r) => s + (r.totalRPCount || 0), 0), [filteredRewardPass, btPerf]);
+  const fundUsedRP   = totalRPCount * 2500;
+  const fee          = Math.round((fundUsedBT > 10000 ? fundUsedBT * 0.015 : 0) * 100) / 100; // 1.5% only if BT > ₹10,000
+
+  const withdrawAmount = useMemo(() => filteredForms.filter(f => f.formType === 'mobikwik-withdraw').reduce((s, f) => s + (f.withdrawAmount || 0), 0), [filteredForms]);
+  const withdrawFees   = Math.round(withdrawAmount * 0.03 * 100) / 100; // 3% withdraw fee
+
+  const totalUsed = fundUsedRP + fee + withdrawFees;
+  const fundLeft  = totalFund - totalUsed;
+
+  // Helper to format a Date to YYYY-MM-DD local string
+  const toLocalDateStr = (d) =>
+    `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+  // Today's BT — uses the "to" date of custom filter, or actual today
+  const todayBT = useMemo(() => {
+    const ref = (dateFilter === 'custom' && toDate) ? new Date(toDate) : new Date();
+    const refStr = toLocalDateStr(ref);
+    return rewardPassData
+      .filter(r => {
+        const d = new Date(r.dateOfWorking || r.createdAt || '');
+        return !isNaN(d) && toLocalDateStr(d) === refStr;
       })
+      .reduce((s, r) => s + (r.totalBTAmount || 0), 0);
+  }, [rewardPassData, dateFilter, toDate]);
+
+  // Yesterday's BT — one day before the "to" date of custom filter, or actual yesterday
+  const yesterdayBT = useMemo(() => {
+    const base = (dateFilter === 'custom' && toDate) ? new Date(toDate) : new Date();
+    const ref = new Date(base); ref.setDate(ref.getDate() - 1);
+    const refStr = toLocalDateStr(ref);
+    return rewardPassData
+      .filter(r => {
+        const d = new Date(r.dateOfWorking || r.createdAt || '');
+        return !isNaN(d) && toLocalDateStr(d) === refStr;
+      })
+      .reduce((s, r) => s + (r.totalBTAmount || 0), 0);
+  }, [rewardPassData, dateFilter, toDate]);
+
+  // ── Data fetching ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!token) { navigate('/'); return; }
+    fetch(`${PROFILE_API_BASE}/api/auth/profile`, { headers: { Authorization: 'Bearer ' + token } })
+      .then(r => { if (r.status === 401) { localStorage.clear(); navigate('/'); } return r.json(); })
       .then(setEmp)
       .catch(console.error);
   }, [token, navigate]);
 
-  // Fetch my Tide BT forms
   useEffect(() => {
     if (!token) return;
-    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-my-forms`, {
-      headers: { Authorization: 'Bearer ' + token }
-    })
-      .then(r => r.json())
-      .then(data => setMyForms(Array.isArray(data) ? data : []))
-      .catch(() => setMyForms([]));
+    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-my-forms`, { headers: { Authorization: 'Bearer ' + token } })
+      .then(r => r.json()).then(data => setMyForms(Array.isArray(data) ? data : [])).catch(() => setMyForms([]));
   }, [token]);
 
-  // Fetch received payments
   useEffect(() => {
     if (!token) return;
-    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-received-payments`, {
+    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-received-payments`, { headers: { Authorization: 'Bearer ' + token } })
+      .then(r => r.json()).then(data => setReceivedPayments(data.payments || data || [])).catch(() => setReceivedPayments([]));
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-my-expenses`, { headers: { Authorization: 'Bearer ' + token } })
+      .then(r => r.json()).then(data => setExpenses(data.expenses || [])).catch(() => setExpenses([]));
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-my-reward-pass`, { headers: { Authorization: 'Bearer ' + token } })
+      .then(r => r.json()).then(data => setRewardPassData(data.data || [])).catch(() => setRewardPassData([]));
+  }, [token]);
+
+  // Fetch BT performance from BT_TL_CONNECT {MONTH} — refetch when month or year changes
+  useEffect(() => {
+    if (!token) return;
+    const params = new URLSearchParams();
+    if (selectedMonth) params.set('selectedMonth', selectedMonth);
+    if (selectedYear) params.set('selectedYear', selectedYear);
+    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-bt-performance?${params.toString()}`, {
       headers: { Authorization: 'Bearer ' + token }
     })
       .then(r => r.json())
-      .then(data => setReceivedPayments(data.payments || []))
-      .catch(() => setReceivedPayments([]));
-  }, [token]);
+      .then(data => { if (data.success) setBtPerf(data); else setBtPerf(null); })
+      .catch(() => setBtPerf(null));
+  }, [token, selectedMonth, selectedYear]);
+
+  useEffect(() => {
+    if (!token) return;
+    const targetMonth = selectedMonth || '';
+    const targetYear  = selectedYear || '';
+    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-my-target?month=${targetMonth}&year=${targetYear}`, { headers: { Authorization: 'Bearer ' + token } })
+      .then(r => r.json()).then(data => setMyTarget(data.target || null)).catch(() => setMyTarget(null));
+  }, [token, selectedMonth, selectedYear]);
+
+  useEffect(() => {
+    if (!token) return;
+    const params = new URLSearchParams();
+    if (selectedMonth) params.set('selectedMonth', selectedMonth);
+    if (selectedYear) params.set('selectedYear', selectedYear);
+    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-team-performance?${params.toString()}`, {
+      headers: { Authorization: 'Bearer ' + token }
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) setTeamPerformance(data);
+        else setTeamPerformance(null);
+      })
+      .catch(() => setTeamPerformance(null));
+  }, [token, selectedMonth, selectedYear]);
+
+  const handleAddExpense = async () => {
+    if (!expenseAmount || !expensePurpose) return;
+    setExpenseLoading(true);
+    try {
+      const res = await fetch(`${PROFILE_API_BASE}/api/auth/tidebt-add-expense`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ amount: expenseAmount, purpose: expensePurpose })
+      });
+      if (res.ok) {
+        setExpenseAmount(''); setExpensePurpose('');
+        const expRes = await fetch(`${PROFILE_API_BASE}/api/auth/tidebt-my-expenses`, { headers: { Authorization: 'Bearer ' + token } });
+        const expData = await expRes.json();
+        setExpenses(expData.expenses || []);
+      }
+    } catch (err) { console.error(err); }
+    finally { setExpenseLoading(false); }
+  };
+
+  const handleResetFilter = () => {
+    setDateFilter('all');
+    setFromDate('');
+    setToDate('');
+    setSelectedMonth(new Date().toLocaleString('en-US', { month: 'long' }));
+    setSelectedYear(new Date().getFullYear().toString());
+  };
+
+  const currentMonth = new Date().toLocaleString('en-US', { month: 'long' });
+  const currentYear  = new Date().getFullYear().toString();
+
+  const isFilterActive = dateFilter !== 'all' || fromDate || toDate || selectedMonth !== currentMonth || selectedYear !== currentYear;
+
+  const getKpiDetails = (kpiLabel) => {
+    const remainingBTVal = myTarget?.btTarget ? Math.max(0, myTarget.btTarget - (btPerf?.btAmount || fundUsedBT)) : 0;
+    const remainingRPVal = myTarget?.rpTarget ? Math.max(0, myTarget.rpTarget - totalRPCount) : 0;
+
+    // Helper: merchant list from btPerf
+    const btMerchants = btPerf?.merchants || [];
+
+    switch (kpiLabel) {
+      case 'Reward Pass Count':
+        return {
+          title: 'Reward Pass Count',
+          totalValue: btPerf ? `${btPerf.rewardPassCount} Merchants` : `${totalRPCount} Passes`,
+          desc: btPerf ? 'Merchants with Reward Pass Pro Active.' : 'Total count of reward passes submitted by you.',
+          type: 'individual',
+          items: btPerf
+            ? btMerchants.filter(m => (m.rewardPassPro || '').toLowerCase() === 'active').map(m => ({
+                name: m.lead || '–',
+                value: m.rewardPassPro,
+                detail: `Pass Live: ${m.passLive} · Active Date: ${(() => { const v = m.rewardsPassProActiveDate; if (!v || v === '–') return '–'; const num = parseFloat(v); if (!isNaN(num) && num > 40000 && num < 55000) { const d = new Date((num - 25569) * 86400 * 1000); return isNaN(d) ? v : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } const d = new Date(v); return isNaN(d) ? v : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); })()} · 📞 ${m.merchantNumber}`
+              }))
+            : filteredRewardPass.map(r => ({
+                name: r.workingUpdate || 'Reward Pass Submission',
+                value: `${r.totalRPCount || 0} RP`,
+                detail: `BT Amount: ₹${(r.totalBTAmount || 0).toLocaleString()} · Date: ${r.dateOfWorking ? new Date(r.dateOfWorking).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '–'}`
+              }))
+        };
+
+      case 'BT Amount': {
+        const btCompleted = btPerf ? (btPerf.btAmount || 0) : fundUsedBT;
+        const assignedBtTarget = myTarget ? (myTarget.btTarget || 0) : 0;
+        const remainingTarget = assignedBtTarget > 0 ? Math.max(0, assignedBtTarget - btCompleted) : 0;
+        const achievementPct = assignedBtTarget > 0 ? Math.round((btCompleted / assignedBtTarget) * 100) : 0;
+        return {
+          title: 'BT Amount Details',
+          totalValue: `₹${btCompleted.toLocaleString()}`,
+          desc: assignedBtTarget > 0
+            ? `Target: ₹${assignedBtTarget.toLocaleString()} · Achieved: ${achievementPct}% · Remaining: ₹${remainingTarget.toLocaleString()}`
+            : 'No target assigned for this month. Showing BT completed.',
+          type: 'bt-amount-performance',
+          btTarget: assignedBtTarget,
+          btCompleted,
+          remaining: remainingTarget,
+          achievement: achievementPct,
+          items: btPerf
+            ? (btPerf.merchants || [])
+                .filter(m => (m.stage3 || 0) > 0)
+                .sort((a, b) => (b.stage3 || 0) - (a.stage3 || 0))
+                .map(m => ({
+                  name: m.lead || '–',
+                  value: `₹${(m.stage3 || 0).toLocaleString()}`,
+                  detail: `UPI: ${m.upiActive} · Txn: ${m.upiTxnCount} · 📞 ${m.merchantNumber}`
+                }))
+            : filteredRewardPass.map(r => ({
+                name: r.workingUpdate || 'Reward Pass Submission',
+                value: `₹${(r.totalBTAmount || 0).toLocaleString()}`,
+                detail: `Date: ${r.dateOfWorking ? new Date(r.dateOfWorking).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '–'}`
+              }))
+        };
+      }
+
+      case 'UPI Amount':
+        return {
+          title: 'UPI Amount',
+          totalValue: `₹${(btPerf?.upiAmount || 0).toLocaleString()}`,
+          desc: `UPI transactions for BT · Total: ${btPerf?.upiTxnCount || 0} · Gap: ₹${(btPerf?.upiGap || 0).toLocaleString()}`,
+          type: 'individual',
+          items: btMerchants.filter(m => m.upiTxnCount > 0).map(m => ({
+            name: m.lead || '–',
+            value: `${m.upiTxnCount} Txn`,
+            detail: `UPI: ${m.upiActive} · Gap: ${m.upiGap} · 📞 ${m.merchantNumber}`
+          }))
+        };
+
+      case 'Team BT': {
+        const teamTarget = teamPerformance?.teamTarget || 0;
+        const btCompleted = teamPerformance?.btCompleted || 0;
+        const remainingTarget = Math.max(0, teamTarget - btCompleted);
+        const achievementPct = teamTarget > 0 ? Math.round((btCompleted / teamTarget) * 100) : 0;
+
+        return {
+          title: 'Team BT',
+          totalValue: `₹${btCompleted.toLocaleString()}`,
+          desc: `Team target: ₹${teamTarget.toLocaleString()} · Achieved: ${achievementPct}% · Remaining: ₹${remainingTarget.toLocaleString()}`,
+          type: 'team-performance',
+          color: 'bg-primary',
+          items: (teamPerformance?.fseData || []).map(fse => {
+            const fseTarget = fse.btTarget || 0;
+            const fseCompleted = fse.btCompleted || 0;
+            const fseRemaining = Math.max(0, fseTarget - fseCompleted);
+            const fsePct = fseTarget > 0 ? Math.round((fseCompleted / fseTarget) * 100) : 0;
+            const contrib = btCompleted > 0 ? Math.round((fseCompleted / btCompleted) * 100) : 0;
+
+            return {
+              name: fse.fseName,
+              completed: fseCompleted,
+              remaining: fseRemaining,
+              target: fseTarget,
+              achievement: fsePct,
+              contribution: contrib
+            };
+          }).sort((a, b) => b.completed - a.completed)
+        };
+      }
+
+      case 'RP Target':
+        return {
+          title: 'RP Target',
+          totalValue: `${myTarget?.rpTarget || 0} RP`,
+          desc: 'Your monthly target for Reward Pass count.',
+          type: 'remaining',
+          color: 'bg-purple',
+          items: [{
+            name: emp?.newJoinerName || 'My Target',
+            targetValue: `${myTarget?.rpTarget || 0} RP`,
+            actualValue: `${totalRPCount} RP`,
+            value: myTarget?.rpTarget ? (Math.max(0, myTarget.rpTarget - totalRPCount) > 0 ? `${Math.max(0, myTarget.rpTarget - totalRPCount)} RP remaining` : 'Achieved! 🎉') : '–',
+            percentage: myTarget?.rpTarget ? Math.min(100, Math.round((totalRPCount / myTarget.rpTarget) * 100)) : 0
+          }]
+        };
+
+      case 'BT Target':
+        return {
+          title: 'BT Target',
+          totalValue: `₹${(myTarget?.btTarget || 0).toLocaleString()}`,
+          desc: 'Your monthly target for Bank Transfer amount.',
+          type: 'remaining',
+          color: 'bg-primary',
+          items: [{
+            name: emp?.newJoinerName || 'My Target',
+            targetValue: `₹${(myTarget?.btTarget || 0).toLocaleString()}`,
+            actualValue: `₹${fundUsedBT.toLocaleString()}`,
+            value: myTarget?.btTarget ? (Math.max(0, myTarget.btTarget - fundUsedBT) > 0 ? `₹${Math.max(0, myTarget.btTarget - fundUsedBT).toLocaleString()} remaining` : 'Achieved! 🎉') : '–',
+            percentage: myTarget?.btTarget ? Math.min(100, Math.round((fundUsedBT / myTarget.btTarget) * 100)) : 0
+          }]
+        };
+
+      case "Today's BT": {
+        const ref = (dateFilter === 'custom' && toDate) ? new Date(toDate) : new Date();
+        const refStr = toLocalDateStr(ref);
+        const collMonthToday = btPerf?.collectionMonth;
+        const isMatchingMonthToday = !selectedMonth || (collMonthToday && collMonthToday.toLowerCase() === selectedMonth.toLowerCase());
+        const todayForms = (btPerf && isMatchingMonthToday)
+          ? btMerchants.filter(m => (m.todaysStage3 || 0) > 0)
+          : filteredRewardPass.filter(r => {
+              const d = new Date(r.dateOfWorking || r.createdAt || '');
+              return !isNaN(d) && toLocalDateStr(d) === refStr;
+            });
+        const todayTotal = (btPerf && isMatchingMonthToday) ? (btPerf.todaysBT || 0) : todayBT;
+        return {
+          title: "Today's BT",
+          totalValue: `₹${todayTotal.toLocaleString()}`,
+          desc: "Your bank transfer amount for today.",
+          type: 'individual',
+          items: (btPerf && isMatchingMonthToday)
+            ? todayForms.map(m => ({
+                name: m.lead || '–',
+                value: `₹${(m.todaysStage3 || 0).toLocaleString()}`,
+                detail: `📞 ${m.merchantNumber}`
+              }))
+            : todayForms.map(r => ({
+                name: r.workingUpdate || 'Reward Pass Submission',
+                value: `₹${(r.totalBTAmount || 0).toLocaleString()}`,
+                detail: `Date: ${r.dateOfWorking ? new Date(r.dateOfWorking).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '–'}`
+              }))
+        };
+      }
+
+      case "Yesterday's BT": {
+        const base = (dateFilter === 'custom' && toDate) ? new Date(toDate) : new Date();
+        const yRef = new Date(base); yRef.setDate(yRef.getDate() - 1);
+        const yStr = toLocalDateStr(yRef);
+        const collMonth = btPerf?.collectionMonth;
+        const isMatchingMonth = !selectedMonth || (collMonth && collMonth.toLowerCase() === selectedMonth.toLowerCase());
+        const yesterdayForms = (btPerf && isMatchingMonth)
+          ? btMerchants.filter(m => (m.yesterdaysStage3 || 0) > 0)
+          : filteredRewardPass.filter(r => {
+              const d = new Date(r.dateOfWorking || r.createdAt || '');
+              return !isNaN(d) && toLocalDateStr(d) === yStr;
+            });
+        const yTotal = (btPerf && isMatchingMonth) ? (btPerf.yesterdaysBT || 0) : yesterdayBT;
+        return {
+          title: "Yesterday's BT",
+          totalValue: `₹${yTotal.toLocaleString()}`,
+          desc: "Your bank transfer amount for yesterday.",
+          type: 'individual',
+          items: (btPerf && isMatchingMonth)
+            ? yesterdayForms.map(m => ({
+                name: m.lead || '–',
+                value: `₹${(m.yesterdaysStage3 || 0).toLocaleString()}`,
+                detail: `📞 ${m.merchantNumber}`
+              }))
+            : yesterdayForms.map(r => ({
+                name: r.workingUpdate || 'Reward Pass Submission',
+                value: `₹${(r.totalBTAmount || 0).toLocaleString()}`,
+                detail: `RP Count: ${r.totalRPCount || 0} · Date: ${r.dateOfWorking ? new Date(r.dateOfWorking).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '–'}`
+              }))
+        };
+      }
+
+      case 'Remaining BT Target':
+        return {
+          title: 'Remaining BT Target',
+          totalValue: `₹${remainingBTVal.toLocaleString()}`,
+          desc: 'Remaining BT amount needed to hit target this month.',
+          type: 'remaining',
+          color: 'bg-orange',
+          items: [{
+            name: emp?.newJoinerName || 'My Target',
+            targetValue: `₹${(myTarget?.btTarget || 0).toLocaleString()}`,
+            actualValue: `₹${fundUsedBT.toLocaleString()}`,
+            value: myTarget?.btTarget ? (remainingBTVal > 0 ? `₹${remainingBTVal.toLocaleString()} remaining` : 'Achieved! 🎉') : '–',
+            percentage: myTarget?.btTarget ? Math.min(100, Math.round((fundUsedBT / myTarget.btTarget) * 100)) : 0
+          }]
+        };
+
+      case 'Remaining RP Target':
+        return {
+          title: 'Remaining RP Target',
+          totalValue: `${remainingRPVal} RP`,
+          desc: 'Remaining RP count needed to hit target this month.',
+          type: 'remaining',
+          color: 'bg-purple',
+          items: [{
+            name: emp?.newJoinerName || 'My Target',
+            targetValue: `${myTarget?.rpTarget || 0} RP`,
+            actualValue: `${totalRPCount} RP`,
+            value: myTarget?.rpTarget ? (remainingRPVal > 0 ? `${remainingRPVal} RP remaining` : 'Achieved! 🎉') : '–',
+            percentage: myTarget?.rpTarget ? Math.min(100, Math.round((totalRPCount / myTarget.rpTarget) * 100)) : 0
+          }]
+        };
+
+      default:
+        return null;
+    }
+  };
 
   return (
     <>
       <Navbar emp={emp} token={token} />
       <div className="main-content">
-        
-        {/* Welcome card - with Tide BT label */}
+
+        {/* Welcome card */}
         <div className="welcome-card" style={{ padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
           <div className="welcome-avatar" style={{ width: 60, height: 60, fontSize: 24 }}>
             {emp?.image
@@ -80,16 +482,18 @@ export default function Dashboard() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <div style={{ background: 'rgba(255,255,255,0.15)', borderRadius: 10, padding: '8px 16px', color: '#fff', textAlign: 'center', border: '1px solid rgba(255,255,255,0.25)' }}>
-              <div style={{ fontSize: 9, fontWeight: 600, opacity: 0.8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Tide BT</div>
-              <div style={{ fontSize: 18, fontWeight: 700 }}>Total Forms: {myForms.length}</div>
+              <div style={{ fontSize: 9, fontWeight: 600, opacity: 0.8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                Tide BT · {selectedMonth ? `${selectedMonth} ${selectedYear}` : selectedYear ? `All ${selectedYear}` : 'All Time'}
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 700 }}>Forms: {filteredForms.filter(f => f.formType !== 'mobikwik-withdraw').length}</div>
             </div>
             <Link to="/profile" className="profile-btn" style={{ fontSize: 13, padding: '8px 16px' }}>View My Profile ›</Link>
           </div>
         </div>
 
-        {/* Daily Visit Form button */}
+        {/* Action Buttons */}
         <Link to="/daily-visit" style={{ textDecoration: 'none', display: 'block', marginBottom: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', background: 'linear-gradient(135deg, #1a4731 0%, #2d7a4f 100%)', borderRadius: 14, color: '#fff', cursor: 'pointer', boxShadow: '0 4px 16px rgba(26,71,49,0.25)', transition: 'all 0.3s' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', background: 'linear-gradient(135deg, #1a4731 0%, #2d7a4f 100%)', borderRadius: 14, color: '#fff', cursor: 'pointer', boxShadow: '0 4px 16px rgba(26,71,49,0.25)' }}>
             <span style={{ fontSize: 28 }}>📋</span>
             <div style={{ textAlign: 'left' }}>
               <div style={{ fontSize: 16, fontWeight: 700 }}>Tide BT Onboarding</div>
@@ -97,10 +501,8 @@ export default function Dashboard() {
             </div>
           </div>
         </Link>
-
-        {/* Mobikwik/Payzapp Withdraw button */}
-        <Link to="/mobikwik-withdraw" style={{ textDecoration: 'none', display: 'block', marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', background: 'linear-gradient(135deg, #4338ca 0%, #6366f1 100%)', borderRadius: 14, color: '#fff', cursor: 'pointer', boxShadow: '0 4px 16px rgba(67,56,202,0.25)', transition: 'all 0.3s' }}>
+        <Link to="/mobikwik-withdraw" style={{ textDecoration: 'none', display: 'block', marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', background: 'linear-gradient(135deg, #4338ca 0%, #6366f1 100%)', borderRadius: 14, color: '#fff', cursor: 'pointer', boxShadow: '0 4px 16px rgba(67,56,202,0.25)' }}>
             <span style={{ fontSize: 28 }}>💸</span>
             <div style={{ textAlign: 'left' }}>
               <div style={{ fontSize: 16, fontWeight: 700 }}>Mobikwik/Payzapp Withdraw</div>
@@ -108,15 +510,63 @@ export default function Dashboard() {
             </div>
           </div>
         </Link>
+        <Link to="/my-merchants" style={{ textDecoration: 'none', display: 'block', marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', background: 'linear-gradient(135deg, #0f766e 0%, #14b8a6 100%)', borderRadius: 14, color: '#fff', cursor: 'pointer', boxShadow: '0 4px 16px rgba(15,118,110,0.25)' }}>
+            <span style={{ fontSize: 28 }}>🏪</span>
+            <div style={{ textAlign: 'left' }}>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>My Merchants</div>
+              <div style={{ fontSize: 11, opacity: 0.8 }}>View all merchants you have visited</div>
+            </div>
+          </div>
+        </Link>
 
-        {/* Quick overview */}
-        <div className="section-title" style={{ marginTop: 20, marginBottom: 10 }}>Quick Overview</div>
+        {/* ── Date Filter ─────────────────────────────────────────────────── */}
+        <div style={{ background: '#fff', borderRadius: 12, border: '1.5px solid #e8f3ed', padding: '12px 16px', marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#888', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Filter Data</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            {['all', 'today', 'month'].map(f => (
+              <button key={f} onClick={() => { setDateFilter(f); setFromDate(''); setToDate(''); if (f === 'month' || f === 'today') { setSelectedMonth(new Date().toLocaleString('en-US', { month: 'long' })); setSelectedYear(new Date().getFullYear().toString()); } }}
+                style={{ padding: '6px 14px', border: dateFilter === f ? 'none' : '1px solid #dde8dd', borderRadius: 8, background: dateFilter === f ? '#1a4731' : '#fff', color: dateFilter === f ? '#fff' : '#1a4731', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
+                {f === 'all' ? 'All' : f === 'today' ? 'Today' : 'This Month'}
+              </button>
+            ))}
+            <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)}
+              style={{ padding: '5px 8px', border: '1px solid #dde8dd', borderRadius: 8, fontSize: 12 }}>
+              <option value="">All Years</option>
+              {[2026, 2025, 2024].map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <select value={selectedMonth} onChange={e => { setSelectedMonth(e.target.value); if (e.target.value) setDateFilter('all'); }}
+              style={{ padding: '5px 8px', border: '1px solid #dde8dd', borderRadius: 8, fontSize: 12 }}>
+              <option value="">All Months</option>
+              {MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <span style={{ fontSize: 10, color: '#888' }}>Custom:</span>
+            <input type="date" value={fromDate} onChange={e => { setFromDate(e.target.value); setDateFilter('custom'); setSelectedMonth(''); setSelectedYear(''); }}
+              style={{ padding: '5px 8px', border: '1px solid #dde8dd', borderRadius: 8, fontSize: 12 }} />
+            <span style={{ fontSize: 11, color: '#888' }}>–</span>
+            <input type="date" value={toDate} onChange={e => { setToDate(e.target.value); setDateFilter('custom'); setSelectedMonth(''); setSelectedYear(''); }}
+              style={{ padding: '5px 8px', border: '1px solid #dde8dd', borderRadius: 8, fontSize: 12 }} />
+            {isFilterActive && (
+              <button onClick={handleResetFilter}
+                style={{ padding: '5px 10px', border: '1px solid #c62828', borderRadius: 8, background: '#fff', color: '#c62828', fontWeight: 700, fontSize: 11, cursor: 'pointer' }}>
+                ✕ Reset
+              </button>
+            )}
+          </div>
+          {/* Active filter label */}
+          <div style={{ marginTop: 6, fontSize: 10, color: '#1a4731', fontWeight: 600 }}>
+            Showing: {dateFilter === 'today' ? 'Today' : dateFilter === 'month' ? 'This Month' : dateFilter === 'custom' ? `${fromDate || '…'} – ${toDate || '…'}` : `${selectedMonth || 'All Months'}, ${selectedYear || 'All Years'}`}
+          </div>
+        </div>
+
+        {/* ── Quick Overview ──────────────────────────────────────────────── */}
+        <div className="section-title" style={{ marginTop: 8, marginBottom: 10 }}>Quick Overview</div>
         <div className="info-grid" style={{ gap: 10 }}>
           {[
-            { icon: '💼', label: 'Position',          value: emp?.position },
-            { icon: '📍', label: 'Location',           value: emp?.location },
-            { icon: '👤', label: 'Reporting Manager',  value: emp?.reportingManager },
-            { icon: '●',  label: 'Status',             value: emp?.status },
+            { icon: '💼', label: 'Position',         value: emp?.position },
+            { icon: '📍', label: 'Location',          value: emp?.location },
+            { icon: '👤', label: 'Reporting Manager', value: emp?.reportingManager },
+            { icon: '●',  label: 'Status',            value: emp?.status },
           ].map(c => (
             <div className="info-card dash-card" key={c.label} style={{ padding: '12px 14px' }}>
               <div className="dash-icon" style={{ fontSize: 18, marginBottom: 6 }}>{c.icon}</div>
@@ -126,128 +576,594 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* FSE Dashboard Stats */}
-        <div className="section-title" style={{ marginTop: 20, marginBottom: 10 }}>FSE Dashboard</div>
+        {/* ── FSE KPI Cards ────────────────────────────────────────────────── */}
+        <div className="section-title" style={{ marginTop: 20, marginBottom: 10 }}>My Performance</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
           {[
-            { label: 'Count Tide BT', value: '–', icon: '📊', color: '#1a4731', bg: '#e6f4ea' },
-            { label: 'Reward Pass', value: '–', icon: '🏅', color: '#0369a1', bg: '#e0f2fe' },
-            { label: 'Target Reward Pass', value: '–', icon: '🎁', color: '#4338ca', bg: '#ede9fe' },
-            { label: 'Target Tide BT', value: '–', icon: '🎯', color: '#b45309', bg: '#fef3c7' },
-            { label: 'Todays Tide BT', value: '–', icon: '📈', color: '#0f766e', bg: '#ccfbf1' },
-            { label: 'Yesterdays Tide BT', value: '–', icon: '📉', color: '#6b21a8', bg: '#f3e8ff' },
-            { label: 'Achievement %', value: '–', icon: '🏆', color: '#15803d', bg: '#dcfce7' },
-            { label: 'Remaining Target', value: '–', icon: '⏳', color: '#c2410c', bg: '#ffedd5' },
+            { label: 'Reward Pass Count',
+              value: btPerf ? btPerf.rewardPassCount : (filteredRewardPass.reduce((s, r) => s + (r.totalRPCount || 0), 0)),
+              icon: '🏅', color: '#0369a1', bg: '#e0f2fe',
+              sublabel: btPerf ? `${btPerf.passLiveCount} Pass Live` : null
+            },
+            { label: 'BT Amount',
+              value: btPerf ? `₹${(btPerf.btAmount || 0).toLocaleString()}` : (fundUsedBT ? `₹${fundUsedBT.toLocaleString()}` : '₹0'),
+              icon: '💰', color: '#2e7d32', bg: '#e6f4ea',
+              sublabel: btPerf
+                ? (() => {
+                    const gap = (btPerf.merchants || []).filter(m => (m.stage3||0) > 0).reduce((s,m) => s+(m.stage3Gap||0), 0);
+                    return `Gap: ₹${gap.toLocaleString()}`;
+                  })()
+                : null
+            },
+            { label: 'UPI Amount',
+              value: btPerf ? `₹${(btPerf.upiAmount || 0).toLocaleString()}` : '–',
+              icon: '📱', color: '#0284c7', bg: '#e0f2fe',
+              sublabel: btPerf ? `Txn: ${btPerf.upiTxnCount} · Gap: ₹${(btPerf.upiGap || 0).toLocaleString()}` : null
+            },
+            { label: 'RP Target',             value: myTarget?.rpTarget || '–',                                                icon: '🎁', color: '#4338ca', bg: '#ede9fe' },
+            { label: 'BT Target',             value: myTarget?.btTarget ? `₹${myTarget.btTarget.toLocaleString()}` : '–',      icon: '🎯', color: '#b45309', bg: '#fef3c7' },
+            { label: "Today's BT",
+              value: (() => {
+                // Only show today's BT if the selected month matches the BT collection month
+                // Otherwise the todaysStage3 field is from a different month (live rolling field)
+                const collMonth = btPerf?.collectionMonth; // e.g. "May"
+                const isMatchingMonth = !selectedMonth || (collMonth && collMonth.toLowerCase() === selectedMonth.toLowerCase());
+                if (btPerf && isMatchingMonth) return `₹${(btPerf.todaysBT || 0).toLocaleString()}`;
+                return '₹0';
+              })(),
+              icon: '📈', color: '#0f766e', bg: '#ccfbf1',
+              sublabel: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+            },
+            { label: "Yesterday's BT",
+              value: (() => {
+                const collMonth = btPerf?.collectionMonth;
+                const isMatchingMonth = !selectedMonth || (collMonth && collMonth.toLowerCase() === selectedMonth.toLowerCase());
+                if (btPerf && isMatchingMonth) return `₹${(btPerf.yesterdaysBT || 0).toLocaleString()}`;
+                return '₹0';
+              })(),
+              icon: '📉', color: '#6b21a8', bg: '#f3e8ff',
+              sublabel: (() => { const y = new Date(); y.setDate(y.getDate()-1); return y.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); })()
+            },
+            {
+              label: 'Remaining BT Target',
+              value: myTarget?.btTarget
+                ? `₹${Math.max(0, myTarget.btTarget - (btPerf?.btAmount || fundUsedBT)).toLocaleString()}`
+                : '–',
+              icon: '⏳', color: '#c2410c', bg: '#ffedd5'
+            },
+            {
+              label: 'Remaining RP Target',
+              value: myTarget?.rpTarget
+                ? Math.max(0, myTarget.rpTarget - filteredRewardPass.reduce((s, r) => s + (r.totalRPCount || 0), 0))
+                : '–',
+              icon: '⌛', color: '#6b21a8', bg: '#f3e8ff'
+            },
+            {
+              label: 'Team BT',
+              value: teamPerformance ? `₹${(teamPerformance.btCompleted || 0).toLocaleString()}` : '–',
+              icon: '👥', color: '#2e7d32', bg: '#e6f4ea',
+              sublabel: teamPerformance?.teamTarget ? `Target: ₹${teamPerformance.teamTarget.toLocaleString()}` : null
+            },
           ].map(stat => (
-            <div key={stat.label} style={{
-              background: '#fff', borderRadius: 12, padding: '16px 14px',
-              border: '1.5px solid #e8f3ed', boxShadow: '0 2px 8px rgba(26,71,49,0.06)',
-              display: 'flex', flexDirection: 'column', gap: 8
-            }}>
+            <div 
+              key={stat.label} 
+              className="dashboard-kpi-card" 
+              onClick={() => setActiveKpi(stat.label)}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div style={{ width: 32, height: 32, borderRadius: 8, background: stat.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>{stat.icon}</div>
-                <div style={{ fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{stat.label}</div>
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{stat.label}</div>
+                  {stat.sublabel && <div style={{ fontSize: 9, color: '#aaa', marginTop: 1 }}>{stat.sublabel}</div>}
+                </div>
               </div>
               <div style={{ fontSize: 20, fontWeight: 800, color: stat.color }}>{stat.value}</div>
             </div>
           ))}
         </div>
 
-        {/* Received Funds */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 24, marginBottom: 12 }}>
-          <div className="section-title" style={{ margin: 0 }}>💰 Received Funds</div>
-          <div style={{ background: '#e3f2fd', color: '#1565c0', padding: '4px 12px', borderRadius: 16, fontSize: 12, fontWeight: 700 }}>
-            {receivedPayments.length} Payments
-          </div>
+        {/* ── Fund Summary ─────────────────────────────────────────────────── */}
+        <div className="section-title" style={{ marginTop: 24, marginBottom: 12 }}>💰 Fund Summary</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 16 }}>
+          {[
+            { label: 'Total Received', value: `₹${totalFund.toLocaleString()}`,     bg: '#e6f4ea', color: '#2e7d32', border: '#2e7d3230' },
+            { label: 'BT',             value: `₹${fundUsedBT.toLocaleString()}`,     bg: '#fff3e0', color: '#e65100', border: '#e6510030' },
+            { label: `RP ${totalRPCount}×₹2,500`, value: `₹${fundUsedRP.toLocaleString()}`, bg: '#ede9fe', color: '#7c3aed', border: '#7c3aed30' },
+            { label: 'BT Fee (1.5%)', value: `₹${fee.toLocaleString()}`,            bg: '#fce4ec', color: '#c62828', border: '#c6282830' },
+            { label: 'Total Used',    value: `₹${totalUsed.toLocaleString()}`,       bg: '#fff3e0', color: '#ff6f00', border: '#ff980030' },
+            { label: 'Fund Left',     value: `₹${fundLeft.toLocaleString()}`,        bg: fundLeft >= 0 ? '#e3f2fd' : '#fdecea', color: fundLeft >= 0 ? '#1565c0' : '#c62828', border: '#1565c030' },
+          ].map(card => (
+            <div key={card.label} style={{ background: card.bg, borderRadius: 12, padding: '12px 10px', textAlign: 'center', border: `1.5px solid ${card.border}` }}>
+              <div style={{ fontSize: 8, fontWeight: 600, color: '#888', textTransform: 'uppercase', marginBottom: 4 }}>{card.label}</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: card.color }}>{card.value}</div>
+            </div>
+          ))}
         </div>
 
-        {receivedPayments.length === 0 ? (
-          <div style={{ background: '#fff', borderRadius: 14, border: '1.5px solid #e8f3ed', padding: '24px 20px', textAlign: 'center', marginBottom: 16 }}>
-            <p style={{ fontSize: 13, color: '#888', margin: 0 }}>No payments received yet.</p>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
-            {receivedPayments.map((p, i) => (
-              <div key={i} style={{ background: '#fff', borderRadius: 12, border: '1.5px solid #e8f3ed', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: '#1a4731' }}>₹{p.amount?.toLocaleString()}</div>
-                  <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
-                    From: <strong>{p.senderName}</strong> · {p.paymentDoneOn} · {p.createdAt ? new Date(p.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '–'}
-                  </div>
+        {/* ── Mobikwik Summary ─────────────────────────────────────────────── */}
+        {(() => {
+          // Use filteredForms — month/date filter applies to withdraw data
+          const wForms = filteredForms.filter(f => f.formType === 'mobikwik-withdraw');
+          const wTotal = wForms.reduce((s, f) => s + (f.withdrawAmount || 0), 0);
+          const wFees  = Math.round(wTotal * 0.03 * 100) / 100;
+          return (
+            <div style={{ marginBottom: 16 }}>
+              <div className="section-title" style={{ marginBottom: 10 }}>💸 Mobikwik Summary</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+                <div style={{ background: '#ede9fe', borderRadius: 12, padding: '12px 10px', textAlign: 'center', border: '1.5px solid #7c3aed30' }}>
+                  <div style={{ fontSize: 8, fontWeight: 600, color: '#888', textTransform: 'uppercase' }}>Withdraw Amount</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: '#4338ca' }}>₹{wTotal.toLocaleString()}</div>
                 </div>
-                <div style={{ padding: '4px 10px', borderRadius: 8, fontSize: 10, fontWeight: 700, background: '#e6f4ea', color: '#2e7d32' }}>
-                  Received
+                <div style={{ background: '#fce4ec', borderRadius: 12, padding: '12px 10px', textAlign: 'center', border: '1.5px solid #c6282830' }}>
+                  <div style={{ fontSize: 8, fontWeight: 600, color: '#888', textTransform: 'uppercase' }}>Withdraw Fees (3%)</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: '#c62828' }}>₹{wFees.toLocaleString()}</div>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          );
+        })()}
 
-        {/* My Merchant Forms */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 24, marginBottom: 12 }}>
-          <div className="section-title" style={{ margin: 0 }}>My Merchant Forms</div>
-          <div style={{ background: '#e6f4ea', color: '#1a4731', padding: '4px 12px', borderRadius: 16, fontSize: 12, fontWeight: 700 }}>
-            {myForms.length} Forms
+        {/* ── Received Payments ────────────────────────────────────────────── */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#1a4731' }}>Received Payments</div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div style={{ background: '#e3f2fd', color: '#1565c0', padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700 }}>{filteredPayments.length}</div>
+            <button onClick={() => { const el = document.getElementById('fse-payments-list'); if (el) el.style.display = el.style.display === 'none' ? 'flex' : 'none'; }}
+              style={{ padding: '3px 10px', border: '1px solid #dde8dd', borderRadius: 8, background: '#fff', fontSize: 11, fontWeight: 600, color: '#1a4731', cursor: 'pointer' }}>
+              Hide/Show
+            </button>
           </div>
         </div>
-
-        {myForms.length === 0 ? (
-          <div style={{ background: '#fff', borderRadius: 14, border: '1.5px solid #e8f3ed', overflow: 'hidden' }}>
-            <div style={{ padding: '40px 20px', textAlign: 'center' }}>
-              <div style={{ fontSize: 40, marginBottom: 12 }}>📄</div>
-              <p style={{ fontSize: 14, color: '#666', margin: 0 }}>No forms submitted yet. Fill your first Daily Visit form above.</p>
+        <div id="fse-payments-list" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+          {filteredPayments.length === 0 ? (
+            <div style={{ background: '#fff', borderRadius: 14, border: '1.5px solid #e8f3ed', padding: '20px', textAlign: 'center' }}>
+              <p style={{ fontSize: 13, color: '#888', margin: 0 }}>No payments received for this period.</p>
             </div>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {myForms.map((form, i) => {
-              const date = new Date(form.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-              const isOnboarding = form.merchantOpinion === 'Ready For Onboarding';
-              const isExpanded = expandedForm === (form._id || i);
+          ) : (
+            filteredPayments.map((p, i) => {
+              const date = p.createdAt ? new Date(p.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '–';
               return (
-                <div key={form._id || i} style={{ background: '#fff', borderRadius: 12, border: `1.5px solid ${isExpanded ? '#2d7a4f' : '#e8f3ed'}`, overflow: 'hidden', cursor: 'pointer', transition: 'all 0.2s' }}
-                  onClick={() => setExpandedForm(isExpanded ? null : (form._id || i))}>
-                  <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ width: 40, height: 40, borderRadius: '50%', background: isOnboarding ? '#e6f4ea' : '#fdecea', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, color: isOnboarding ? '#2e7d32' : '#c62828', flexShrink: 0 }}>
-                      {form.merchantName?.charAt(0).toUpperCase() || '?'}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: '#1a4731' }}>{form.merchantName}</div>
-                      <div style={{ fontSize: 11, color: '#888', display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 2 }}>
-                        <span>📞 {form.merchantNumber}</span>
-                        {form.merchantCategory && <span>🏷️ {form.merchantCategory}</span>}
-                        <span>📅 {date}</span>
-                      </div>
-                    </div>
-                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      <span style={{ padding: '3px 10px', borderRadius: 12, fontSize: 10, fontWeight: 700, background: isOnboarding ? '#e6f4ea' : '#fdecea', color: isOnboarding ? '#2e7d32' : '#c62828' }}>
-                        {form.merchantOpinion || form.formType}
-                      </span>
-                    </div>
+                <div key={i} style={{ background: '#fff', borderRadius: 10, border: '1px solid #e8f3ed', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#2e7d32' }}>₹{p.amount?.toLocaleString()}</div>
+                    <div style={{ fontSize: 10, color: '#888' }}>From: {p.senderName} · {p.paymentDoneOn} · 📅 {date}</div>
                   </div>
-                  {isExpanded && (
-                    <div style={{ padding: '0 16px 14px', borderTop: '1px solid #e8f3ed', marginTop: 0, paddingTop: 12 }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                        <div><span style={{ fontSize: 10, color: '#888', fontWeight: 600 }}>Merchant Opinion</span><div style={{ fontSize: 13, fontWeight: 600, color: '#1a4731' }}>{form.merchantOpinion || '–'}</div></div>
-                        <div><span style={{ fontSize: 10, color: '#888', fontWeight: 600 }}>Category</span><div style={{ fontSize: 13, fontWeight: 600, color: '#1a4731' }}>{form.merchantCategory || '–'}</div></div>
-                        {form.onboardingStatus && <div><span style={{ fontSize: 10, color: '#888', fontWeight: 600 }}>Onboarding Status</span><div style={{ fontSize: 13, fontWeight: 600, color: '#1a4731' }}>{form.onboardingStatus}</div></div>}
-                        {form.merchantEmailId && <div><span style={{ fontSize: 10, color: '#888', fontWeight: 600 }}>Merchant Email</span><div style={{ fontSize: 13, fontWeight: 600, color: '#1a4731' }}>{form.merchantEmailId}</div></div>}
-                        {form.formType === 'mobikwik-withdraw' && <>
-                          <div><span style={{ fontSize: 10, color: '#888', fontWeight: 600 }}>Withdraw Amount</span><div style={{ fontSize: 13, fontWeight: 600, color: '#1a4731' }}>₹{form.withdrawAmount || '–'}</div></div>
-                          <div><span style={{ fontSize: 10, color: '#888', fontWeight: 600 }}>Withdraw Fees</span><div style={{ fontSize: 13, fontWeight: 600, color: '#1a4731' }}>₹{form.withdrawFees || '–'}</div></div>
-                          <div><span style={{ fontSize: 10, color: '#888', fontWeight: 600 }}>Reason</span><div style={{ fontSize: 13, fontWeight: 600, color: '#1a4731' }}>{form.reasonOfWithdraw || '–'}</div></div>
-                          <div><span style={{ fontSize: 10, color: '#888', fontWeight: 600 }}>Transaction Date</span><div style={{ fontSize: 13, fontWeight: 600, color: '#1a4731' }}>{form.transactionDate ? new Date(form.transactionDate).toLocaleDateString('en-IN') : '–'}</div></div>
-                        </>}
-                      </div>
-                    </div>
-                  )}
                 </div>
               );
-            })}
-          </div>
+            })
+          )}
+        </div>
+
+        {/* ── Expense History ───────────────────────────────────────────────── */}
+        {filteredExpenses.length > 0 && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#e65100' }}>Expenses</div>
+              <div style={{ background: '#fff3e0', color: '#e65100', padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700 }}>{filteredExpenses.length}</div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
+              {filteredExpenses.map((e, i) => (
+                <div key={i} style={{ background: '#fff', borderRadius: 10, border: '1px solid #e8f3ed', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#e65100' }}>-₹{e.amount?.toLocaleString()}</div>
+                    <div style={{ fontSize: 10, color: '#888' }}>{e.purpose} · {e.createdAt ? new Date(e.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '–'}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
         )}
 
+        {/* ── My Forms (Tabbed) ────────────────────────────────────────────── */}
+        {(() => {
+          // Amount range helper
+          const AMOUNT_RANGES = [
+            { label: 'All Amounts', value: '' },
+            { label: '₹0 – ₹10,000',         value: '0-10000',       min: 0,      max: 10000 },
+            { label: '₹10,001 – ₹50,000',     value: '10001-50000',   min: 10001,  max: 50000 },
+            { label: '₹50,001 – ₹1,00,000',   value: '50001-100000',  min: 50001,  max: 100000 },
+            { label: '₹1,00,001 – ₹1,50,000', value: '100001-150000', min: 100001, max: 150000 },
+            { label: '₹1,50,001 – ₹2,00,000', value: '150001-200000', min: 150001, max: 200000 },
+          ];
+          const selectedRange = AMOUNT_RANGES.find(r => r.value === amountRange);
+
+          // Build BT amount lookup from btPerf merchants (stage3 per merchantNumber)
+          const btAmountLookup = {};
+          (btPerf?.merchants || []).forEach(m => {
+            btAmountLookup[(m.merchantNumber || '').trim()] = m.stage3 || 0;
+          });
+
+          const getFormBTAmount = (form) => {
+            const num = (form.merchantNumber || '').trim();
+            if (btAmountLookup[num] !== undefined) return btAmountLookup[num];
+            // fallback: withdrawAmount if present
+            return form.withdrawAmount || 0;
+          };
+
+          const applyAmountFilter = (forms) => {
+            // 'All Amounts' — no range selected, return everything
+            if (!amountRange || !selectedRange) return forms;
+            return forms.filter(f => {
+              const amt = getFormBTAmount(f);
+              return amt >= selectedRange.min && amt <= selectedRange.max;
+            });
+          };
+
+          // Excel serial date converter (BT_TL_CONNECT stores dates as Excel serial numbers)
+          const fmtExcelDate = (val) => {
+            if (!val || val === '–' || val === '-' || val === '0' || val === 0) return '–';
+            const num = parseFloat(val);
+            if (!isNaN(num) && num > 40000 && num < 55000) {
+              const d = new Date(Math.round((num - 25569) * 86400 * 1000));
+              return isNaN(d.getTime()) ? val : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+            }
+            const d = new Date(val);
+            return isNaN(d.getTime()) ? val : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+          };
+
+          // Per-merchant BT/RP/Live data from btPerf
+          const btMerchantMap = {};      // keyed by merchantNumber
+          const btMerchantByName = {};   // keyed by lead name (fallback)
+          (btPerf?.merchants || []).forEach(m => {
+            const num  = (m.merchantNumber || '').trim();
+            const name = (m.lead || '').trim().toLowerCase();
+            if (num)  btMerchantMap[num]     = m;
+            if (name) btMerchantByName[name] = m;
+          });
+
+          const getActualStage = (form) => {
+            const num  = (form.merchantNumber || '').trim();
+            const name = (form.merchantName  || '').trim().toLowerCase();
+            // Primary: number lookup; Fallback: name lookup
+            const m = btMerchantMap[num] || btMerchantByName[name] || null;
+            if (!m) return { label: form.merchantOpinion || 'Ready For Onboarding', color: '#888', bg: '#f0f0f0', icon: '📋', btAmt: 0, rpCount: 0, passLive: '–', btGap: 0, upiTxn: 0 };
+
+            const stage3  = parseFloat(m.stage3)      || 0;
+            const stage3Gap = parseFloat(m.stage3Gap) || 0;
+            const upiTxn  = parseFloat(m.upiTxnCount) || 0;
+            const passLive = (m.passLive || '').toLowerCase() === 'live';
+            const rpActive = (m.rewardPassPro || '').toLowerCase() === 'active';
+            const btDone   = stage3 > 0;
+            let label, color, bg, icon;
+            if (passLive)       { label = 'RP Live 🎉'; color = '#2e7d32'; bg = '#e6f4ea'; icon = '🟢'; }
+            else if (rpActive)  { label = 'RP Active';  color = '#0369a1'; bg = '#e0f2fe'; icon = '🔵'; }
+            else if (btDone)    { label = 'BT Done';    color = '#e65100'; bg = '#fff3e0'; icon = '🟠'; }
+            else                { label = 'Ready';      color = '#6b21a8'; bg = '#f3e8ff'; icon = '🟣'; }
+
+            return {
+              label, color, bg, icon,
+              btAmt:   stage3,
+              rpCount: rpActive ? 1 : 0,
+              passLive: m.passLive || '–',
+              btGap:   stage3Gap,
+              upiTxn,
+              upiActive:    m.upiActive || '–',
+              priorityPass: m.priorityPassStatus || '–',
+              msmegst:      m.msmegstStatus || '–',
+              insurance:    m.insuranceStatus || '–',
+              rpActiveDate: fmtExcelDate(m.rewardsPassProActiveDate),
+              partnerName:  m.partnerName || form.merchantName || '–',
+            };
+          };
+
+          const allOnboarding = filteredForms.filter(f => f.formType === 'daily-visit' || !f.formType);
+          const onboardingForms = applyAmountFilter(allOnboarding);
+          const withdrawForms   = filteredForms.filter(f => f.formType === 'mobikwik-withdraw');
+
+          const btPendingList = allOnboarding.filter(f => getActualStage(f).label === 'Ready');
+          const rpPendingList = allOnboarding.filter(f => getActualStage(f).label === 'BT Done');
+          const completedList = allOnboarding.filter(f => {
+            const label = getActualStage(f).label;
+            return label === 'RP Active' || label === 'RP Live 🎉';
+          });
+
+          const btPendingCount = btPendingList.length;
+          const rpPendingCount = rpPendingList.length;
+          const completedCount = completedList.length;
+
+          const pendingList = pendingTab === 'bt' 
+            ? btPendingList 
+            : pendingTab === 'rp' 
+              ? rpPendingList 
+              : completedList;
+
+          // AmountFilterBar component — matches TL Panel exactly
+          const AmountFilterBar = () => (
+            <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, color: '#888', fontWeight: 600 }}>BT Amount:</span>
+              <select value={amountRange} onChange={e => setAmountRange(e.target.value)}
+                style={{ fontSize: 12, padding: '4px 10px', borderRadius: 8, border: '1px solid #dde8dd', background: '#fff', color: '#1a4731', fontWeight: 600 }}>
+                {AMOUNT_RANGES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
+              {amountRange && (
+                <>
+                  <button onClick={() => setAmountRange('')}
+                    style={{ fontSize: 11, padding: '4px 10px', border: '1px solid #c62828', borderRadius: 8, background: '#fff', color: '#c62828', cursor: 'pointer', fontWeight: 700 }}>
+                    ✕
+                  </button>
+                  <span style={{ fontSize: 11, color: '#888' }}>{onboardingForms.length} of {allOnboarding.length}</span>
+                </>
+              )}
+            </div>
+          );
+
+          return (
+            <>
+              <div className="section-title" style={{ marginTop: 24, marginBottom: 12 }}>My Forms</div>
+
+              <div style={{ display: 'flex', gap: 0, marginBottom: 12, borderBottom: '2px solid #e8f3ed' }}>
+                {[
+                  { key: 'onboard',    label: 'Tide BT Onboard',    count: onboardingForms.length },
+                  { key: 'mobikwik',   label: 'Mobikwik/Payzapp',   count: withdrawForms.length },
+                ].map(tab => (
+                  <button key={tab.key} onClick={() => setFormTab(tab.key)}
+                    style={{ padding: '8px 16px', border: 'none', background: formTab === tab.key ? '#1a4731' : 'transparent', color: formTab === tab.key ? '#fff' : '#1a4731', fontWeight: 700, fontSize: 11, cursor: 'pointer', borderRadius: '8px 8px 0 0' }}>
+                    {tab.label} ({tab.count})
+                  </button>
+                ))}
+              </div>
+
+              {formTab === 'onboard' && (
+                <>
+                  {onboardingForms.length === 0
+                    ? <div style={{ background: '#fff', borderRadius: 12, border: '1.5px solid #e8f3ed', padding: '20px', textAlign: 'center' }}><p style={{ fontSize: 13, color: '#888', margin: 0 }}>No onboarding forms for this period.</p></div>
+                    : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {onboardingForms.map((form, i) => {
+                          const date = new Date(form.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+                          const isExpanded = expandedForm === (form._id || i);
+                          // Simple status from form data only — no BT_TL_CONNECT
+                          const status = form.onboardingStatus || form.merchantOpinion || 'Submitted';
+                          const statusColors = {
+                            'Ready For Onboarding': { bg: '#ede9fe', color: '#6b21a8' },
+                            'Completed':            { bg: '#d8f3dc', color: '#1a4731' },
+                            'Not Interested':       { bg: '#fee2e2', color: '#b91c1c' },
+                            'Need to visit again':  { bg: '#fff3c7', color: '#92400e' },
+                          };
+                          const sc = statusColors[status] || { bg: '#e8f3ed', color: '#1a4731' };
+                          return (
+                            <div key={form._id || i}
+                              style={{ background: '#fff', borderRadius: 10, border: '1.5px solid #e8f3ed', padding: '12px 14px', cursor: 'pointer' }}
+                              onClick={() => setExpandedForm(isExpanded ? null : (form._id || i))}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#e8f3ed', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0 }}>🏪</div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 13, fontWeight: 700, color: '#1a4731', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{form.merchantName}</div>
+                                  <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+                                    📞 {form.merchantNumber}
+                                    {form.merchantCategory ? ` · ${form.merchantCategory}` : ''}
+                                    {' · 📅 '}{date}
+                                  </div>
+                                </div>
+                                <span style={{ padding: '3px 8px', borderRadius: 10, fontSize: 9, fontWeight: 700, background: sc.bg, color: sc.color, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                  {status}
+                                </span>
+                              </div>
+                              {isExpanded && (
+                                <div style={{ marginTop: 10, padding: '10px 12px', background: '#f8faf9', borderRadius: 8, fontSize: 11, color: '#333', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                                  <div><b>Merchant:</b> {form.merchantName}</div>
+                                  <div><b>Phone:</b> {form.merchantNumber}</div>
+                                  <div><b>Category:</b> {form.merchantCategory || '–'}</div>
+                                  <div><b>Opinion:</b> {form.merchantOpinion || '–'}</div>
+                                  <div><b>Status:</b> <span style={{ color: sc.color, fontWeight: 700 }}>{status}</span></div>
+                                  <div><b>Email:</b> {form.merchantEmailId || '–'}</div>
+                                  <div><b>Submitted:</b> {date}</div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )
+                  }
+                </>
+              )}
+
+              {formTab === 'mobikwik' && (withdrawForms.length === 0
+                ? <div style={{ background: '#fff', borderRadius: 12, border: '1.5px solid #e8f3ed', padding: '20px', textAlign: 'center' }}><p style={{ fontSize: 13, color: '#888', margin: 0 }}>No withdraw forms for this period.</p></div>
+                : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {withdrawForms.map((form, i) => {
+                      const date = new Date(form.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+                      const isExpanded = expandedForm === (form._id || `w-${i}`);
+                      return (
+                        <div key={form._id || i} style={{ background: '#fff', borderRadius: 10, border: '1px solid #e8f3ed', padding: '12px 14px', cursor: 'pointer' }}
+                          onClick={() => setExpandedForm(isExpanded ? null : (form._id || `w-${i}`))}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#ede9fe', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, flexShrink: 0 }}>💸</div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: '#4338ca' }}>₹{form.withdrawAmount?.toLocaleString() || '–'}</div>
+                              <div style={{ fontSize: 10, color: '#888' }}>{form.reasonOfWithdraw || '–'} · 📅 {date}</div>
+                            </div>
+                            <span style={{ padding: '3px 8px', borderRadius: 10, fontSize: 9, fontWeight: 700, background: '#ede9fe', color: '#4338ca' }}>Fees: ₹{form.withdrawFees || 0}</span>
+                          </div>
+                          {isExpanded && (
+                            <div style={{ marginTop: 10, padding: '10px 12px', background: '#f8faf9', borderRadius: 8, fontSize: 11, color: '#333', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                              <div><b>Merchant:</b> {form.merchantName}</div>
+                              <div><b>Phone:</b> {form.merchantNumber}</div>
+                              <div><b>Amount:</b> ₹{form.withdrawAmount?.toLocaleString() || '–'}</div>
+                              <div><b>Fees:</b> ₹{form.withdrawFees || 0}</div>
+                              <div><b>Reason:</b> {form.reasonOfWithdraw || '–'}</div>
+                              <div><b>Txn Date:</b> {form.transactionDate ? new Date(form.transactionDate).toLocaleDateString('en-IN') : '–'}</div>
+                              <div><b>Date:</b> {date}</div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
+              )}
+
+            </>
+          );
+        })()}
+
       </div>
+
+      {/* ── KPI DETAILS BOTTOM SHEET ── */}
+      {activeKpi && (() => {
+        const details = getKpiDetails(activeKpi);
+        if (!details) return null;
+        return (
+          <div className="bottom-sheet-overlay" onClick={() => setActiveKpi(null)}>
+            <div className="bottom-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="bottom-sheet-handle"></div>
+              
+              <div className="bottom-sheet-header">
+                <span className="bottom-sheet-title">{details.title} Details</span>
+                <button className="bottom-sheet-close" onClick={() => setActiveKpi(null)}>✕</button>
+              </div>
+              
+              <div className="bottom-sheet-content">
+                {/* Highlighted KPI Summary */}
+                <div className="kpi-summary-highlight">
+                  <div className="kpi-summary-label">{details.title}</div>
+                  <div className="kpi-summary-value">{details.totalValue}</div>
+                  <div className="kpi-summary-desc">{details.desc}</div>
+                </div>
+
+                {details.type === 'bt-amount-performance' && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', marginBottom: '20px', marginTop: '10px' }}>
+                    <div style={{ background: '#f5faf7', border: '1px solid #e8f3ed', borderRadius: '12px', padding: '12px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '10px', color: '#666', fontWeight: '600', textTransform: 'uppercase' }}>BT Target</div>
+                      <div style={{ fontSize: '16px', fontWeight: '800', color: '#1a4731', marginTop: '4px' }}>
+                        {details.btTarget > 0 ? `₹${details.btTarget.toLocaleString()}` : '–'}
+                      </div>
+                    </div>
+                    <div style={{ background: '#e6f4ea', border: '1px solid #d8f3dc', borderRadius: '12px', padding: '12px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '10px', color: '#2e7d32', fontWeight: '600', textTransform: 'uppercase' }}>BT Completed</div>
+                      <div style={{ fontSize: '16px', fontWeight: '800', color: '#2e7d32', marginTop: '4px' }}>
+                        ₹{details.btCompleted.toLocaleString()}
+                      </div>
+                    </div>
+                    <div style={{ background: '#fff7ed', border: '1px solid #ffedd5', borderRadius: '12px', padding: '12px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '10px', color: '#c2410c', fontWeight: '600', textTransform: 'uppercase' }}>Remaining Target</div>
+                      <div style={{ fontSize: '16px', fontWeight: '800', color: '#c2410c', marginTop: '4px' }}>
+                        {details.btTarget > 0 ? `₹${details.remaining.toLocaleString()}` : '–'}
+                      </div>
+                    </div>
+                    <div style={{ background: '#eff6ff', border: '1px solid #dbeafe', borderRadius: '12px', padding: '12px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '10px', color: '#1d4ed8', fontWeight: '600', textTransform: 'uppercase' }}>Achievement %</div>
+                      <div style={{ fontSize: '16px', fontWeight: '800', color: '#1d4ed8', marginTop: '4px' }}>
+                        {details.btTarget > 0 ? `${details.achievement}%` : '–'}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {details.type === 'team-performance' && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', marginBottom: '20px', marginTop: '10px' }}>
+                    <div style={{ background: '#f5faf7', border: '1px solid #e8f3ed', borderRadius: '12px', padding: '12px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '10px', color: '#666', fontWeight: '600', textTransform: 'uppercase' }}>Team Target</div>
+                      <div style={{ fontSize: '16px', fontWeight: '800', color: '#1a4731', marginTop: '4px' }}>
+                        ₹{(teamPerformance?.teamTarget || 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div style={{ background: '#e6f4ea', border: '1px solid #d8f3dc', borderRadius: '12px', padding: '12px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '10px', color: '#2e7d32', fontWeight: '600', textTransform: 'uppercase' }}>BT Completed</div>
+                      <div style={{ fontSize: '16px', fontWeight: '800', color: '#2e7d32', marginTop: '4px' }}>
+                        ₹{(teamPerformance?.btCompleted || 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div style={{ background: '#fff7ed', border: '1px solid #ffedd5', borderRadius: '12px', padding: '12px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '10px', color: '#c2410c', fontWeight: '600', textTransform: 'uppercase' }}>Remaining Target</div>
+                      <div style={{ fontSize: '16px', fontWeight: '800', color: '#c2410c', marginTop: '4px' }}>
+                        ₹{Math.max(0, (teamPerformance?.teamTarget || 0) - (teamPerformance?.btCompleted || 0)).toLocaleString()}
+                      </div>
+                    </div>
+                    <div style={{ background: '#eff6ff', border: '1px solid #dbeafe', borderRadius: '12px', padding: '12px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '10px', color: '#1d4ed8', fontWeight: '600', textTransform: 'uppercase' }}>Achievement %</div>
+                      <div style={{ fontSize: '16px', fontWeight: '800', color: '#1d4ed8', marginTop: '4px' }}>
+                        {teamPerformance?.teamTarget > 0 ? Math.round(((teamPerformance?.btCompleted || 0) / teamPerformance.teamTarget) * 100) : 0}%
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Items list */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 20 }}>
+                  {details.items.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-light)', fontSize: 13 }}>
+                      No data found for the selected period.
+                    </div>
+                  ) : details.type === 'individual' || details.type === 'bt-amount-performance' ? (
+                    // Individual daily operations list
+                    details.items.map((item, idx) => (
+                      <div key={idx} className="sheet-list-item">
+                        <div className="sheet-list-left">
+                          <div className="sheet-list-title">{item.name}</div>
+                          <div className="sheet-list-subtitle">{item.detail}</div>
+                        </div>
+                        <div className="sheet-list-right">{item.value}</div>
+                      </div>
+                    ))
+                  ) : details.type === 'team-performance' ? (
+                    // Team BT Target details per FSE
+                    details.items.map((item, idx) => {
+                      const avatarInitials = item.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+                      const isAchieved = item.achievement >= 100;
+                      return (
+                        <div key={idx} className="employee-card">
+                          <div className="employee-info-row">
+                            <div className="employee-profile">
+                              <div className="employee-avatar">{avatarInitials}</div>
+                              <div>
+                                <div className="employee-name">{item.name}</div>
+                                <div className="employee-role">Target: ₹{item.target.toLocaleString()} · Remaining: ₹{item.remaining.toLocaleString()}</div>
+                              </div>
+                            </div>
+                            <div className="employee-stats">
+                              <div className="employee-value" style={{ color: isAchieved ? '#2e7d32' : 'var(--green-dark)' }}>₹{item.completed.toLocaleString()}</div>
+                              <div className="employee-contrib">{item.achievement}% hit · {item.contribution}% team share</div>
+                            </div>
+                          </div>
+                          <div className="progress-bar-container">
+                            <div 
+                              className={`progress-bar-fill ${isAchieved ? 'bg-primary' : details.color}`}
+                              style={{ width: `${Math.min(100, item.achievement)}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    // Target progress card
+                    details.items.map((item, idx) => {
+                      const avatarInitials = (emp?.newJoinerName || 'Me').split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+                      const isAchieved = item.percentage >= 100;
+                      return (
+                        <div key={idx} className="employee-card">
+                          <div className="employee-info-row">
+                            <div className="employee-profile">
+                              <div className="employee-avatar">{avatarInitials}</div>
+                              <div>
+                                <div className="employee-name">{item.name}</div>
+                                <div className="employee-role">Target: {item.targetValue} · Actual: {item.actualValue}</div>
+                              </div>
+                            </div>
+                            <div className="employee-stats">
+                              <div className="employee-value" style={{ color: isAchieved ? '#2e7d32' : 'var(--green-dark)' }}>{item.value}</div>
+                              <div className="employee-contrib">{item.percentage}% target hit</div>
+                            </div>
+                          </div>
+                          <div className="progress-bar-container">
+                            <div 
+                              className={`progress-bar-fill ${isAchieved ? 'bg-primary' : details.color}`}
+                              style={{ width: `${item.percentage}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       <Footer />
     </>
   );
