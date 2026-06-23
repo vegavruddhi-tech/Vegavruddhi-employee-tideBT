@@ -92,9 +92,8 @@ export default function Login() {
       const tideBTData = await tideBTRes.json();
       
       if (tideBTData.hasTideBTAccess) {
-        // Show popup to select Tide or Tide BT
-        setShowTidePopup(true);
-        setLoading(false);
+        // Since we are already on Tide BT, go straight to dashboard!
+        navigate('/dashboard');
       } else {
         // No Tide BT access, go directly to Tide dashboard
         navigate('/dashboard');
@@ -189,13 +188,7 @@ export default function Login() {
           </div>
         </div>
         
-        {/* Tide Selection Popup */}
-        <TideSelectionPopup
-          open={showTidePopup}
-          onClose={() => setShowTidePopup(false)}
-          onSelectTide={handleSelectTide}
-          onSelectTideBT={handleSelectTideBT}
-        />
+        {/* Tide Selection Popup removed because we are already on Tide BT */}
       </div>
     </>
   );

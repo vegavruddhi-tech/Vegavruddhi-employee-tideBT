@@ -139,7 +139,7 @@ router.post('/google-login', async (req, res) => {
     res.json({ token, user: employee });
   } catch (err) {
     console.error('Google login error:', err.message);
-    res.status(401).json({ message: 'Google sign-in failed. Please try again.' });
+    res.status(401).json({ message: 'Google sign-in failed.', error: err.message });
   }
 });
 
