@@ -19,7 +19,8 @@ export default function Login() {
     const tokenFromURL = params.get('token');
     
     if (tokenFromURL) {
-      // Save token and redirect to dashboard
+      // Clear any previous session before saving new token
+      localStorage.clear();
       localStorage.setItem('token', tokenFromURL);
       navigate('/dashboard');
       return;
