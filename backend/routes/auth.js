@@ -950,4 +950,78 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
   }
 });
 
+// GET /api/auth/tidebt-annual-bt-summary
+// Returns BT amount + RP count for each month of the year — used for cumulative carry-forward
+router.get('/tidebt-annual-bt-summary', verifyToken, async (req, res) => {
+  try {
+    const employee = await Employee.findById(req.user.id).select('newJoinerName email');
+    if (!employee) return res.status(404).json({ message: 'Employee not found' });
+
+    const db      = mongoose.connection.db;
+    const empName  = employee.newJoinerName.trim();
+    const empEmail = employee.email.trim();
+    const escape   = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const { year } = req.query;
+    const yearStr  = year || String(new Date().getFullYear());
+
+    // Get all merchant numbers for this FSE from bt_master
+    const masterDocs = await db.collection('bt_master').find({
+      $or: [
+        { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
+        { fseName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*\\d*\\s*$`, 'i') } }
+      ]
+    }).project({ merchantNumber: 1 }).toArray();
+
+    const merchantNumbers = [...new Set(
+      masterDocs.map(m => (m.merchantNumber || '').trim()).filter(Boolean)
+    )];
+
+    if (merchantNumbers.length === 0) {
+      return res.json({ success: true, months: [] });
+    }
+
+    // Find all BT_TL_CONNECT collections for this year
+    const allCollections = (await db.listCollections().toArray()).map(c => c.name);
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const shortYear = yearStr.slice(-2);
+
+    // For each month, find matching collection and aggregate BT+RP
+    const monthResults = await Promise.all(MONTH_NAMES.map(async (monthName) => {
+      const monthUpper = monthName.toUpperCase();
+      // Find collection for this month+year
+      const btCols = allCollections.filter(c => c.toUpperCase().startsWith('BT_TL_CONNECT'));
+      const tlCols = allCollections.filter(c => c.toUpperCase().includes('TL_CONNECT') && !c.toUpperCase().startsWith('BT_TL_CONNECT'));
+      const candidates = [...btCols, ...tlCols];
+
+      let colName = candidates.find(c => {
+        const cu = c.toUpperCase();
+        return cu.includes(monthUpper) && (cu.includes(yearStr) || cu.includes(shortYear));
+      });
+      if (!colName) colName = candidates.find(c => c.toUpperCase().includes(monthUpper));
+
+      if (!colName) return { month: monthName, btAmount: 0, rewardPassCount: 0, passLiveCount: 0, collectionFound: false };
+
+      const btDocs = await db.collection(colName).find({
+        merchantNumber: { $in: merchantNumbers }
+      }).project({ stage3: 1, stage3Gap: 1, rewardPassPro: 1, priorityPassPro: 1, passLive: 1 }).toArray();
+
+      let btAmount = 0, rewardPassCount = 0, passLiveCount = 0;
+      btDocs.forEach(r => {
+        const parseNum = v => { const n = parseFloat(String(v || '0').replace(/,/g, '')); return isNaN(n) ? 0 : n; };
+        btAmount += parseNum(r.stage3 || r.Stage_3 || r['Stage-3']);
+        const rp = (r.rewardPassPro || r.priorityPassPro || '').toLowerCase();
+        if (rp === 'active') rewardPassCount++;
+        if ((r.passLive || '').toLowerCase() === 'live') passLiveCount++;
+      });
+
+      return { month: monthName, btAmount, rewardPassCount, passLiveCount, collectionFound: true };
+    }));
+
+    res.json({ success: true, year: yearStr, months: monthResults });
+  } catch (err) {
+    console.error('Annual BT summary error:', err.message);
+    res.status(500).json({ message: err.message });
+  }
+});
+
 module.exports = router;
