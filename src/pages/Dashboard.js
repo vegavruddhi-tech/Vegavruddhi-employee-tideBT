@@ -91,6 +91,51 @@ export default function Dashboard() {
   const totalUsed = fundUsedRP + fee + withdrawFees;
   const fundLeft  = totalFund - totalUsed;
 
+  // ── Previous month carry-forward (pure frontend — no extra API call) ──────
+  // NOTE: We only use receivedPayments (reliable) for prev month.
+  // BT used amount from BT_TL_CONNECT is not available for prev months without
+  // an extra API call, so we show received vs remaining without deducting BT.
+  const prevMonthData = useMemo(() => {
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const curMonthIdx  = selectedMonth ? MONTH_NAMES.indexOf(selectedMonth) : new Date().getMonth();
+    const curYear      = selectedYear  ? parseInt(selectedYear)             : new Date().getFullYear();
+    const prevMonthIdx = curMonthIdx === 0 ? 11 : curMonthIdx - 1;
+    const prevYear     = curMonthIdx === 0 ? curYear - 1 : curYear;
+    const prevMonthName = MONTH_NAMES[prevMonthIdx];
+
+    const isInPrevMonth = (dateRaw) => {
+      if (!dateRaw) return false;
+      const d = new Date(dateRaw);
+      if (isNaN(d)) return false;
+      return d.getFullYear() === prevYear && d.getMonth() === prevMonthIdx;
+    };
+
+    // Only use payments data — this is the only reliable prev-month source
+    const prevReceived = receivedPayments
+      .filter(p => isInPrevMonth(p.createdAt))
+      .reduce((s, p) => s + (p.amount || 0), 0);
+
+    // RP and withdraw from local data (accurate)
+    const prevRPForms  = rewardPassData.filter(r => isInPrevMonth(r.dateOfWorking || r.createdAt));
+    const prevRPCount  = prevRPForms.reduce((s, r) => s + (r.totalRPCount || 0), 0);
+    const prevRP       = prevRPCount * 2500;
+    const prevWithdraw = myForms
+      .filter(f => f.formType === 'mobikwik-withdraw' && isInPrevMonth(f.createdAt))
+      .reduce((s, f) => s + (f.withdrawAmount || 0), 0);
+    const prevWithdrawFees = Math.round(prevWithdraw * 0.03 * 100) / 100;
+    // NOTE: BT fee excluded — BT amount unavailable for prev months on frontend
+    const prevTotalUsed = prevRP + prevWithdrawFees;
+    const prevFundLeft  = prevReceived - prevTotalUsed;
+
+    return { prevMonthName, prevYear, prevReceived, prevRPCount, prevRP, prevWithdraw, prevTotalUsed, prevFundLeft };
+  }, [receivedPayments, rewardPassData, myForms, selectedMonth, selectedYear]);
+
+  // ── Combined KPIs including carry-forward ─────────────────────────────────
+  // Total Available = this month received + prev month remaining (carry-forward)
+  const carryForward     = prevMonthData.prevFundLeft > 0 ? prevMonthData.prevFundLeft : 0;
+  const totalAvailable   = totalFund + carryForward;
+  const fundLeftWithCarry = totalAvailable - totalUsed;
+
   // Helper to format a Date to YYYY-MM-DD local string
   const toLocalDateStr = (d) =>
     `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -658,18 +703,42 @@ export default function Dashboard() {
 
         {/* ── Fund Summary ─────────────────────────────────────────────────── */}
         <div className="section-title" style={{ marginTop: 24, marginBottom: 12 }}>💰 Fund Summary</div>
+
+        {/* Previous month carry-forward banner */}
+        {prevMonthData.prevReceived > 0 && (
+          <div style={{ background: 'linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%)', borderRadius: 12, padding: '12px 14px', marginBottom: 12, border: '1.5px solid #a5d6a7', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#2e7d32', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                📅 {prevMonthData.prevMonthName} {prevMonthData.prevYear} — Carry Forward
+              </div>
+              <div style={{ fontSize: 11, color: '#555', marginTop: 3 }}>
+                Received ₹{prevMonthData.prevReceived.toLocaleString()} · Used ₹{prevMonthData.prevTotalUsed.toLocaleString()}
+              </div>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 10, color: '#888', fontWeight: 600 }}>Remaining</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: prevMonthData.prevFundLeft >= 0 ? '#1565c0' : '#c62828' }}>
+                ₹{prevMonthData.prevFundLeft.toLocaleString()}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 16 }}>
           {[
-            { label: 'Total Received', value: `₹${totalFund.toLocaleString()}`,     bg: '#e6f4ea', color: '#2e7d32', border: '#2e7d3230' },
-            { label: 'BT',             value: `₹${fundUsedBT.toLocaleString()}`,     bg: '#fff3e0', color: '#e65100', border: '#e6510030' },
-            { label: `RP ${totalRPCount}×₹2,500`, value: `₹${fundUsedRP.toLocaleString()}`, bg: '#ede9fe', color: '#7c3aed', border: '#7c3aed30' },
-            { label: 'BT Fee (1.5%)', value: `₹${fee.toLocaleString()}`,            bg: '#fce4ec', color: '#c62828', border: '#c6282830' },
-            { label: 'Total Used',    value: `₹${totalUsed.toLocaleString()}`,       bg: '#fff3e0', color: '#ff6f00', border: '#ff980030' },
-            { label: 'Fund Left',     value: `₹${fundLeft.toLocaleString()}`,        bg: fundLeft >= 0 ? '#e3f2fd' : '#fdecea', color: fundLeft >= 0 ? '#1565c0' : '#c62828', border: '#1565c030' },
+            { label: 'This Month',    value: `₹${totalFund.toLocaleString()}`,          bg: '#e6f4ea', color: '#2e7d32', border: '#2e7d3230', sub: 'Received' },
+            { label: 'Carry Forward', value: `₹${carryForward.toLocaleString()}`,        bg: '#e8f5e9', color: '#388e3c', border: '#43a04730', sub: `From ${prevMonthData.prevMonthName}` },
+            { label: 'Total Available', value: `₹${totalAvailable.toLocaleString()}`,   bg: '#f1f8e9', color: '#1b5e20', border: '#2e7d3240', sub: 'This Month + Carry' },
+            { label: 'BT',             value: `₹${fundUsedBT.toLocaleString()}`,         bg: '#fff3e0', color: '#e65100', border: '#e6510030', sub: 'Used' },
+            { label: `RP ${totalRPCount}×₹2,500`, value: `₹${fundUsedRP.toLocaleString()}`, bg: '#ede9fe', color: '#7c3aed', border: '#7c3aed30', sub: 'Used' },
+            { label: 'BT Fee (1.5%)', value: `₹${fee.toLocaleString()}`,                 bg: '#fce4ec', color: '#c62828', border: '#c6282830', sub: 'Deducted' },
+            { label: 'Total Used',    value: `₹${totalUsed.toLocaleString()}`,            bg: '#fff3e0', color: '#ff6f00', border: '#ff980030', sub: 'RP + Fee + Withdraw' },
+            { label: 'Fund Left',     value: `₹${fundLeftWithCarry.toLocaleString()}`,    bg: fundLeftWithCarry >= 0 ? '#e3f2fd' : '#fdecea', color: fundLeftWithCarry >= 0 ? '#1565c0' : '#c62828', border: '#1565c030', sub: 'Available − Used' },
           ].map(card => (
             <div key={card.label} style={{ background: card.bg, borderRadius: 12, padding: '12px 10px', textAlign: 'center', border: `1.5px solid ${card.border}` }}>
-              <div style={{ fontSize: 8, fontWeight: 600, color: '#888', textTransform: 'uppercase', marginBottom: 4 }}>{card.label}</div>
+              <div style={{ fontSize: 8, fontWeight: 600, color: '#888', textTransform: 'uppercase', marginBottom: 2 }}>{card.label}</div>
               <div style={{ fontSize: 14, fontWeight: 800, color: card.color }}>{card.value}</div>
+              {card.sub && <div style={{ fontSize: 8, color: '#aaa', marginTop: 2 }}>{card.sub}</div>}
             </div>
           ))}
         </div>
