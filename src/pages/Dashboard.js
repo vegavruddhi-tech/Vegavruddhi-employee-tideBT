@@ -23,6 +23,7 @@ export default function Dashboard() {
   const [expensePurpose, setExpensePurpose] = useState('');
   const [expenseLoading, setExpenseLoading] = useState(false);
   const [btPerf, setBtPerf] = useState(null); // BT performance from BT_TL_CONNECT MAY
+  const [prevBtPerf, setPrevBtPerf] = useState(null); // Prev month BT performance
   const [pendingTab, setPendingTab] = useState('bt');
   const [teamPerformance, setTeamPerformance] = useState(null);
 
@@ -91,10 +92,7 @@ export default function Dashboard() {
   const totalUsed = fundUsedRP + fee + withdrawFees;
   const fundLeft  = totalFund - totalUsed;
 
-  // ── Previous month carry-forward (pure frontend — no extra API call) ──────
-  // NOTE: We only use receivedPayments (reliable) for prev month.
-  // BT used amount from BT_TL_CONNECT is not available for prev months without
-  // an extra API call, so we show received vs remaining without deducting BT.
+  // ── Previous month carry-forward — uses prevBtPerf API for accurate BT/RP ──
   const prevMonthData = useMemo(() => {
     const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
     const curMonthIdx  = selectedMonth ? MONTH_NAMES.indexOf(selectedMonth) : new Date().getMonth();
@@ -110,25 +108,28 @@ export default function Dashboard() {
       return d.getFullYear() === prevYear && d.getMonth() === prevMonthIdx;
     };
 
-    // Only use payments data — this is the only reliable prev-month source
+    // Fund received in prev month
     const prevReceived = receivedPayments
       .filter(p => isInPrevMonth(p.createdAt))
       .reduce((s, p) => s + (p.amount || 0), 0);
 
-    // RP and withdraw from local data (accurate)
-    const prevRPForms  = rewardPassData.filter(r => isInPrevMonth(r.dateOfWorking || r.createdAt));
-    const prevRPCount  = prevRPForms.reduce((s, r) => s + (r.totalRPCount || 0), 0);
-    const prevRP       = prevRPCount * 2500;
+    // BT & RP from prevBtPerf API — accurate, same source as current month
+    const prevBT      = prevBtPerf ? (prevBtPerf.btAmount       || 0) : 0;
+    const prevRPCount = prevBtPerf ? (prevBtPerf.rewardPassCount || 0) : 0;
+    const prevRP      = prevRPCount * 2500;
+    const prevFee     = Math.round((prevBT > 10000 ? prevBT * 0.015 : 0) * 100) / 100;
+
+    // Mobikwik withdraw from local forms
     const prevWithdraw = myForms
       .filter(f => f.formType === 'mobikwik-withdraw' && isInPrevMonth(f.createdAt))
       .reduce((s, f) => s + (f.withdrawAmount || 0), 0);
     const prevWithdrawFees = Math.round(prevWithdraw * 0.03 * 100) / 100;
-    // NOTE: BT fee excluded — BT amount unavailable for prev months on frontend
-    const prevTotalUsed = prevRP + prevWithdrawFees;
+
+    const prevTotalUsed = prevRP + prevFee + prevWithdrawFees;
     const prevFundLeft  = prevReceived - prevTotalUsed;
 
-    return { prevMonthName, prevYear, prevReceived, prevRPCount, prevRP, prevWithdraw, prevTotalUsed, prevFundLeft };
-  }, [receivedPayments, rewardPassData, myForms, selectedMonth, selectedYear]);
+    return { prevMonthName, prevYear, prevReceived, prevBT, prevRPCount, prevRP, prevFee, prevWithdraw, prevTotalUsed, prevFundLeft };
+  }, [receivedPayments, prevBtPerf, myForms, selectedMonth, selectedYear]);
 
   // ── Combined KPIs including carry-forward ─────────────────────────────────
   // Total Available = this month received + prev month remaining (carry-forward)
@@ -201,6 +202,14 @@ export default function Dashboard() {
   // Fetch BT performance from BT_TL_CONNECT {MONTH} — refetch when month or year changes
   useEffect(() => {
     if (!token) return;
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const curMonthIdx  = selectedMonth ? MONTH_NAMES.indexOf(selectedMonth) : new Date().getMonth();
+    const curYear      = selectedYear  ? parseInt(selectedYear)             : new Date().getFullYear();
+    const prevMonthIdx = curMonthIdx === 0 ? 11 : curMonthIdx - 1;
+    const prevYear     = curMonthIdx === 0 ? curYear - 1 : curYear;
+    const prevMonthName = MONTH_NAMES[prevMonthIdx];
+
+    // Current month
     const params = new URLSearchParams();
     if (selectedMonth) params.set('selectedMonth', selectedMonth);
     if (selectedYear) params.set('selectedYear', selectedYear);
@@ -210,6 +219,17 @@ export default function Dashboard() {
       .then(r => r.json())
       .then(data => { if (data.success) setBtPerf(data); else setBtPerf(null); })
       .catch(() => setBtPerf(null));
+
+    // Previous month — for accurate carry-forward Used calculation
+    const prevParams = new URLSearchParams();
+    prevParams.set('selectedMonth', prevMonthName);
+    prevParams.set('selectedYear', String(prevYear));
+    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-bt-performance?${prevParams.toString()}`, {
+      headers: { Authorization: 'Bearer ' + token }
+    })
+      .then(r => r.json())
+      .then(data => { if (data.success) setPrevBtPerf(data); else setPrevBtPerf(null); })
+      .catch(() => setPrevBtPerf(null));
   }, [token, selectedMonth, selectedYear]);
 
   useEffect(() => {
@@ -712,7 +732,7 @@ export default function Dashboard() {
                 📅 {prevMonthData.prevMonthName} {prevMonthData.prevYear} — Carry Forward
               </div>
               <div style={{ fontSize: 11, color: '#555', marginTop: 3 }}>
-                Received ₹{prevMonthData.prevReceived.toLocaleString()} · Used ₹{prevMonthData.prevTotalUsed.toLocaleString()}
+                Received ₹{prevMonthData.prevReceived.toLocaleString()} · BT ₹{prevMonthData.prevBT.toLocaleString()} · RP {prevMonthData.prevRPCount}×₹2,500 · Used ₹{prevMonthData.prevTotalUsed.toLocaleString()}
               </div>
             </div>
             <div style={{ textAlign: 'right' }}>
