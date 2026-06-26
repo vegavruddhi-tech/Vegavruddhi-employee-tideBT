@@ -133,7 +133,8 @@ export default function Dashboard() {
   }, [receivedPayments, prevBtPerf, myForms, selectedMonth, selectedYear]);
 
   // ── Combined KPIs including carry-forward ─────────────────────────────────
-  // Cumulative carry = sum of (received - used) for ALL months before current month
+  // Use prevMonthData.prevFundLeft as the carry — it uses prevBtPerf which is accurate.
+  // annualBtSummary is used only when it's available (for months before prev month).
   const carryForward = useMemo(() => {
     const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
     const curMonthIdx = selectedMonth ? MONTH_NAMES.indexOf(selectedMonth) : new Date().getMonth();
@@ -143,9 +144,12 @@ export default function Dashboard() {
     const pastMonths = MONTH_NAMES.slice(0, curMonthIdx);
     if (pastMonths.length === 0) return 0;
 
+    const prevMonthIdx  = curMonthIdx - 1;
+    const prevMonthName = MONTH_NAMES[prevMonthIdx];
+
     let totalCarry = 0;
     pastMonths.forEach(monthName => {
-      // Received in this month
+      // Received in this month from payments
       const monthReceived = receivedPayments
         .filter(p => {
           if (!p.createdAt) return false;
@@ -154,14 +158,24 @@ export default function Dashboard() {
         })
         .reduce((s, p) => s + (p.amount || 0), 0);
 
-      // BT & RP from annual summary if available
-      const monthData = annualBtSummary?.months?.find(m => m.month === monthName);
-      const monthBT   = monthData ? (monthData.btAmount       || 0) : 0;
-      const monthRP   = monthData ? (monthData.rewardPassCount || 0) : 0;
+      if (monthReceived === 0) return; // no fund received, skip
+
+      let monthBT = 0, monthRP = 0;
+
+      if (monthName === prevMonthName && prevBtPerf) {
+        // Use accurate prevBtPerf for the immediately previous month
+        monthBT = prevBtPerf.btAmount       || 0;
+        monthRP = prevBtPerf.rewardPassCount || 0;
+      } else if (annualBtSummary?.months) {
+        // Use annual summary for older months
+        const monthData = annualBtSummary.months.find(m => m.month === monthName);
+        monthBT = monthData ? (monthData.btAmount       || 0) : 0;
+        monthRP = monthData ? (monthData.rewardPassCount || 0) : 0;
+      }
+
       const monthRPCost = monthRP * 2500;
       const monthFee    = Math.round((monthBT > 10000 ? monthBT * 0.015 : 0) * 100) / 100;
 
-      // Mobikwik withdraw fees for this month
       const monthWithdraw = myForms
         .filter(f => {
           if (f.formType !== 'mobikwik-withdraw' || !f.createdAt) return false;
@@ -177,7 +191,7 @@ export default function Dashboard() {
     });
 
     return totalCarry;
-  }, [receivedPayments, annualBtSummary, myForms, selectedMonth, selectedYear]);
+  }, [receivedPayments, prevBtPerf, annualBtSummary, myForms, selectedMonth, selectedYear]);
 
   const totalAvailable    = totalFund + carryForward;
   const fundLeftWithCarry = totalAvailable - totalUsed;
