@@ -24,6 +24,7 @@ export default function Dashboard() {
   const [expenseLoading, setExpenseLoading] = useState(false);
   const [btPerf, setBtPerf] = useState(null); // BT performance from BT_TL_CONNECT MAY
   const [prevBtPerf, setPrevBtPerf] = useState(null); // Prev month BT performance
+  const [annualBtSummary, setAnnualBtSummary] = useState(null); // All months BT data
   const [pendingTab, setPendingTab] = useState('bt');
   const [teamPerformance, setTeamPerformance] = useState(null);
 
@@ -132,9 +133,53 @@ export default function Dashboard() {
   }, [receivedPayments, prevBtPerf, myForms, selectedMonth, selectedYear]);
 
   // ── Combined KPIs including carry-forward ─────────────────────────────────
-  // Total Available = this month received + prev month remaining (carry-forward)
-  const carryForward     = prevMonthData.prevFundLeft > 0 ? prevMonthData.prevFundLeft : 0;
-  const totalAvailable   = totalFund + carryForward;
+  // Cumulative carry = sum of (received - used) for ALL months before current month
+  const carryForward = useMemo(() => {
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const curMonthIdx = selectedMonth ? MONTH_NAMES.indexOf(selectedMonth) : new Date().getMonth();
+    const curYear     = selectedYear  ? parseInt(selectedYear)             : new Date().getFullYear();
+
+    // All months before current month in the same year
+    const pastMonths = MONTH_NAMES.slice(0, curMonthIdx);
+    if (pastMonths.length === 0) return 0;
+
+    let totalCarry = 0;
+    pastMonths.forEach(monthName => {
+      // Received in this month
+      const monthReceived = receivedPayments
+        .filter(p => {
+          if (!p.createdAt) return false;
+          const d = new Date(p.createdAt);
+          return d.getFullYear() === curYear && MONTH_NAMES[d.getMonth()] === monthName;
+        })
+        .reduce((s, p) => s + (p.amount || 0), 0);
+
+      // BT & RP from annual summary if available
+      const monthData = annualBtSummary?.months?.find(m => m.month === monthName);
+      const monthBT   = monthData ? (monthData.btAmount       || 0) : 0;
+      const monthRP   = monthData ? (monthData.rewardPassCount || 0) : 0;
+      const monthRPCost = monthRP * 2500;
+      const monthFee    = Math.round((monthBT > 10000 ? monthBT * 0.015 : 0) * 100) / 100;
+
+      // Mobikwik withdraw fees for this month
+      const monthWithdraw = myForms
+        .filter(f => {
+          if (f.formType !== 'mobikwik-withdraw' || !f.createdAt) return false;
+          const d = new Date(f.createdAt);
+          return d.getFullYear() === curYear && MONTH_NAMES[d.getMonth()] === monthName;
+        })
+        .reduce((s, f) => s + (f.withdrawAmount || 0), 0);
+      const monthWithdrawFees = Math.round(monthWithdraw * 0.03 * 100) / 100;
+
+      const monthUsed = monthRPCost + monthFee + monthWithdrawFees;
+      const monthLeft = monthReceived - monthUsed;
+      if (monthLeft > 0) totalCarry += monthLeft;
+    });
+
+    return totalCarry;
+  }, [receivedPayments, annualBtSummary, myForms, selectedMonth, selectedYear]);
+
+  const totalAvailable    = totalFund + carryForward;
   const fundLeftWithCarry = totalAvailable - totalUsed;
 
   // Helper to format a Date to YYYY-MM-DD local string
@@ -230,6 +275,15 @@ export default function Dashboard() {
       .then(r => r.json())
       .then(data => { if (data.success) setPrevBtPerf(data); else setPrevBtPerf(null); })
       .catch(() => setPrevBtPerf(null));
+
+    // Annual summary — all months for cumulative carry-forward
+    const yearStr = String(curYear);
+    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-annual-bt-summary?year=${yearStr}`, {
+      headers: { Authorization: 'Bearer ' + token }
+    })
+      .then(r => r.json())
+      .then(data => { if (data.success) setAnnualBtSummary(data); else setAnnualBtSummary(null); })
+      .catch(() => setAnnualBtSummary(null));
   }, [token, selectedMonth, selectedYear]);
 
   useEffect(() => {
@@ -736,9 +790,9 @@ export default function Dashboard() {
               </div>
             </div>
             <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: 10, color: '#888', fontWeight: 600 }}>Remaining</div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: prevMonthData.prevFundLeft >= 0 ? '#1565c0' : '#c62828' }}>
-                ₹{prevMonthData.prevFundLeft.toLocaleString()}
+              <div style={{ fontSize: 10, color: '#888', fontWeight: 600 }}>Carry Into {selectedMonth || 'This Month'}</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: carryForward >= 0 ? '#1565c0' : '#c62828' }}>
+                ₹{carryForward.toLocaleString()}
               </div>
             </div>
           </div>
