@@ -141,16 +141,17 @@ export default function Dashboard() {
     const curMonthIdx = selectedMonth ? MONTH_NAMES.indexOf(selectedMonth) : new Date().getMonth();
     const curYear     = selectedYear  ? parseInt(selectedYear)             : new Date().getFullYear();
 
-    // All months before current month in the same year
     const pastMonths = MONTH_NAMES.slice(0, curMonthIdx);
     if (pastMonths.length === 0) return 0;
 
     const prevMonthIdx  = curMonthIdx - 1;
     const prevMonthName = MONTH_NAMES[prevMonthIdx];
 
-    let totalCarry = 0;
+    // Use running balance — negative months (returns) reduce balance, positive months add
+    let runningBalance = 0;
+
     pastMonths.forEach(monthName => {
-      // Received in this month from payments
+      // Net received this month (positive = received fund, negative = returned fund to admin)
       const monthReceived = (Array.isArray(receivedPayments) ? receivedPayments : [])
         .filter(p => {
           if (!p.createdAt) return false;
@@ -159,16 +160,12 @@ export default function Dashboard() {
         })
         .reduce((s, p) => s + (p.amount || 0), 0);
 
-      if (monthReceived === 0) return; // no fund received, skip
-
+      // Get BT/RP costs for this month
       let monthBT = 0, monthRP = 0;
-
       if (monthName === prevMonthName && prevBtPerf) {
-        // Use accurate prevBtPerf for the immediately previous month
         monthBT = prevBtPerf.btAmount       || 0;
         monthRP = prevBtPerf.rewardPassCount || 0;
       } else if (annualBtSummary?.months) {
-        // Use annual summary for older months
         const monthData = annualBtSummary.months.find(m => m.month === monthName);
         monthBT = monthData ? (monthData.btAmount       || 0) : 0;
         monthRP = monthData ? (monthData.rewardPassCount || 0) : 0;
@@ -187,11 +184,13 @@ export default function Dashboard() {
       const monthWithdrawFees = Math.round(monthWithdraw * 0.03 * 100) / 100;
 
       const monthUsed = monthRPCost + monthFee + monthWithdrawFees;
-      const monthLeft = monthReceived - monthUsed;
-      if (monthLeft > 0) totalCarry += monthLeft;
+
+      // Net = received (can be negative if returned) minus used costs
+      // Running balance accumulates — clamp to 0 (can't carry negative)
+      runningBalance = Math.max(0, runningBalance + monthReceived - monthUsed);
     });
 
-    return totalCarry;
+    return runningBalance;
   }, [receivedPayments, prevBtPerf, annualBtSummary, myForms, selectedMonth, selectedYear]);
 
   const totalAvailable    = totalFund + carryForward;
@@ -815,7 +814,14 @@ export default function Dashboard() {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 16 }}>
           {[
-            { label: 'This Month',    value: `₹${totalFund.toLocaleString()}`,          bg: '#e6f4ea', color: '#2e7d32', border: '#2e7d3230', sub: 'Received' },
+            {
+              label: 'This Month',
+              value: `₹${totalFund.toLocaleString()}`,
+              bg: totalFund < 0 ? '#fdecea' : '#e6f4ea',
+              color: totalFund < 0 ? '#c62828' : '#2e7d32',
+              border: totalFund < 0 ? '#c6282830' : '#2e7d3230',
+              sub: totalFund < 0 ? 'Returned to Admin' : 'Net Received'
+            },
             { label: 'Carry Forward', value: `₹${carryForward.toLocaleString()}`,        bg: '#e8f5e9', color: '#388e3c', border: '#43a04730', sub: `From ${prevMonthData.prevMonthName}` },
             { label: 'Total Available', value: `₹${totalAvailable.toLocaleString()}`,   bg: '#f1f8e9', color: '#1b5e20', border: '#2e7d3240', sub: 'This Month + Carry' },
             { label: 'BT',             value: `₹${fundUsedBT.toLocaleString()}`,         bg: '#fff3e0', color: '#e65100', border: '#e6510030', sub: 'Used' },
@@ -857,7 +863,7 @@ export default function Dashboard() {
 
         {/* ── Received Payments ────────────────────────────────────────────── */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#1a4731' }}>Received Payments</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#1a4731' }}>Fund Transactions</div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <div style={{ background: '#e3f2fd', color: '#1565c0', padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700 }}>{filteredPayments.length}</div>
             <button onClick={() => { const el = document.getElementById('fse-payments-list'); if (el) el.style.display = el.style.display === 'none' ? 'flex' : 'none'; }}
@@ -869,17 +875,38 @@ export default function Dashboard() {
         <div id="fse-payments-list" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
           {filteredPayments.length === 0 ? (
             <div style={{ background: '#fff', borderRadius: 14, border: '1.5px solid #e8f3ed', padding: '20px', textAlign: 'center' }}>
-              <p style={{ fontSize: 13, color: '#888', margin: 0 }}>No payments received for this period.</p>
+              <p style={{ fontSize: 13, color: '#888', margin: 0 }}>No transactions for this period.</p>
             </div>
           ) : (
             filteredPayments.map((p, i) => {
+              const isReturn = (p.amount || 0) < 0;
               const date = p.createdAt ? new Date(p.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '–';
               return (
-                <div key={i} style={{ background: '#fff', borderRadius: 10, border: '1px solid #e8f3ed', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div key={i} style={{
+                  background: isReturn ? '#fff5f5' : '#fff',
+                  borderRadius: 10,
+                  border: `1px solid ${isReturn ? '#ffcdd2' : '#e8f3ed'}`,
+                  padding: '10px 14px',
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+                }}>
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#2e7d32' }}>₹{p.amount?.toLocaleString()}</div>
-                    <div style={{ fontSize: 10, color: '#888' }}>From: {p.senderName} · {p.paymentDoneOn} · 📅 {date}</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: isReturn ? '#c62828' : '#888', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2 }}>
+                      {isReturn ? `↩ Returned to ${p.senderName || 'Admin'}` : '⬇ Received Fund'}
+                    </div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: isReturn ? '#c62828' : '#2e7d32' }}>
+                      ₹{Math.abs(p.amount || 0).toLocaleString()}
+                    </div>
+                    <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+                      {isReturn ? `${p.transferTo} → ${p.senderName}` : `${p.senderName} → You`} · {p.paymentDoneOn} · 📅 {date}
+                    </div>
                   </div>
+                  <span style={{
+                    fontSize: 9, padding: '3px 8px', borderRadius: 8, fontWeight: 700,
+                    background: isReturn ? '#fdecea' : '#e6f4ea',
+                    color: isReturn ? '#c62828' : '#2e7d32'
+                  }}>
+                    {isReturn ? 'Return' : 'Credit'}
+                  </span>
                 </div>
               );
             })
