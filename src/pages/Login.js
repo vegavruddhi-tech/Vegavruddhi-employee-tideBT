@@ -190,6 +190,20 @@ export default function Login() {
           <div style={{ marginTop: 28, fontSize: 13, color: '#6b9e82' }}>
             New joiner? <Link to="/register" style={{ color: '#1a4731', fontWeight: 700, textDecoration: 'none' }}>Register here</Link>
           </div>
+
+          <div style={{ marginTop: 20 }}>
+            <a
+              href="https://vegavruddhi-employee-panel-ke56.vercel.app/"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                fontSize: 13, color: '#4a7060', textDecoration: 'none',
+                padding: '8px 16px', borderRadius: 8, border: '1px solid #c8ddd3',
+                background: '#f0f7f3', fontWeight: 600, transition: 'all 0.2s'
+              }}
+            >
+              ← Back to Main Employee Dashboard
+            </a>
+          </div>
         </div>
         
         {/* Tide Selection Popup removed because we are already on Tide BT */}
