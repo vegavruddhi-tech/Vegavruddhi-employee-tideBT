@@ -38,6 +38,7 @@ export default function Dashboard() {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
   const [selectedMonth, setSelectedMonth] = useState(new Date().toLocaleString('en-US', { month: 'long' }));
   const filterByDate = useCallback((items, dateField = 'createdAt') => {
+    if (!Array.isArray(items)) return [];
     const now = new Date();
     const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
@@ -150,7 +151,7 @@ export default function Dashboard() {
     let totalCarry = 0;
     pastMonths.forEach(monthName => {
       // Received in this month from payments
-      const monthReceived = receivedPayments
+      const monthReceived = (Array.isArray(receivedPayments) ? receivedPayments : [])
         .filter(p => {
           if (!p.createdAt) return false;
           const d = new Date(p.createdAt);
@@ -176,7 +177,7 @@ export default function Dashboard() {
       const monthRPCost = monthRP * 2500;
       const monthFee    = Math.round((monthBT > 10000 ? monthBT * 0.015 : 0) * 100) / 100;
 
-      const monthWithdraw = myForms
+      const monthWithdraw = (Array.isArray(myForms) ? myForms : [])
         .filter(f => {
           if (f.formType !== 'mobikwik-withdraw' || !f.createdAt) return false;
           const d = new Date(f.createdAt);
