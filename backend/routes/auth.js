@@ -228,6 +228,10 @@ router.post('/tidebt-daily-visit', verifyToken, async (req, res) => {
       merchantEmailId
     });
 
+    // ── Bust this employee's merchant cache (new visit = data changed) ────
+    const { cacheInvalidatePattern, cacheKey } = require('../utils/cache');
+    await cacheInvalidatePattern(`EMP_MERCHANTS:${employee.newJoinerName.trim().replace(/\s+/g,'_').toUpperCase()}:*`);
+
     res.status(201).json({ message: 'Daily visit form submitted', form: formResponse });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -664,6 +668,13 @@ router.get('/tidebt-my-merchants', verifyToken, async (req, res) => {
     const escape   = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const { selectedMonth, selectedYear } = req.query;
 
+    // ── Cache check ───────────────────────────────────────────────────────
+    const { cacheGet, cacheSet, cacheKey } = require('../utils/cache');
+    const ck = cacheKey('EMP_MERCHANTS', empName, selectedMonth, selectedYear);
+    const cached = await cacheGet(ck);
+    if (cached) return res.json(cached);
+    // ─────────────────────────────────────────────────────────────────────
+
     // ── Step 1: Get ALL merchants for this FSE from bt_master ────────────────
     // Match by fseEmail (most reliable) OR fseName (with digit-suffix tolerance)
     const masterDocs = await db.collection('bt_master').find({
@@ -802,7 +813,9 @@ router.get('/tidebt-my-merchants', verifyToken, async (req, res) => {
       return (a.merchantName || '').localeCompare(b.merchantName || '');
     });
 
-    res.json({ success: true, merchants, total: merchants.length, btCollection: btCollectionName });
+    const result = { success: true, merchants, total: merchants.length, btCollection: btCollectionName };
+    await cacheSet(ck, result); // permanent — cleared when new form submitted or data synced
+    res.json(result);
   } catch (err) {
     console.error('My merchants error:', err.message);
     res.status(500).json({ message: err.message });
