@@ -1041,7 +1041,6 @@ router.get('/tidebt-annual-bt-summary', verifyToken, async (req, res) => {
     const empName  = employee.newJoinerName.trim();
     const empEmail = employee.email.trim();
     const escape   = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const yearStr  = year || String(new Date().getFullYear());
 
     // Get current merchant numbers from bt_master (active merchants)
     const masterDocs = await db.collection('bt_master').find({
