@@ -225,6 +225,22 @@ export default function Dashboard() {
       .reduce((s, r) => s + (r.totalBTAmount || 0), 0);
   }, [rewardPassData, dateFilter, toDate]);
 
+  // ── Stale-while-revalidate fetch helper ───────────────────────────────────
+  // Shows cached data from localStorage instantly, then refreshes in background
+  const cachedFetch = useCallback((url, setter, transform, cacheKeyStr) => {
+    const stored = localStorage.getItem(cacheKeyStr);
+    if (stored) {
+      try { setter(transform(JSON.parse(stored))); } catch {}
+    }
+    fetch(url, { headers: { Authorization: 'Bearer ' + token } })
+      .then(r => r.json())
+      .then(data => {
+        localStorage.setItem(cacheKeyStr, JSON.stringify(data));
+        setter(transform(data));
+      })
+      .catch(() => {});
+  }, [token]);
+
   // ── Data fetching ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!token) { navigate('/'); return; }
@@ -236,27 +252,23 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!token) return;
-    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-my-forms`, { headers: { Authorization: 'Bearer ' + token } })
-      .then(r => r.json()).then(data => setMyForms(Array.isArray(data) ? data : [])).catch(() => setMyForms([]));
-  }, [token]);
+    cachedFetch(`${PROFILE_API_BASE}/api/auth/tidebt-my-forms`, setMyForms, d => Array.isArray(d) ? d : [], 'ebt_forms');
+  }, [token, cachedFetch]);
 
   useEffect(() => {
     if (!token) return;
-    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-received-payments`, { headers: { Authorization: 'Bearer ' + token } })
-      .then(r => r.json()).then(data => setReceivedPayments(data.payments || data || [])).catch(() => setReceivedPayments([]));
-  }, [token]);
+    cachedFetch(`${PROFILE_API_BASE}/api/auth/tidebt-received-payments`, setReceivedPayments, d => d.payments || d || [], 'ebt_payments');
+  }, [token, cachedFetch]);
 
   useEffect(() => {
     if (!token) return;
-    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-my-expenses`, { headers: { Authorization: 'Bearer ' + token } })
-      .then(r => r.json()).then(data => setExpenses(data.expenses || [])).catch(() => setExpenses([]));
-  }, [token]);
+    cachedFetch(`${PROFILE_API_BASE}/api/auth/tidebt-my-expenses`, setExpenses, d => d.expenses || [], 'ebt_expenses');
+  }, [token, cachedFetch]);
 
   useEffect(() => {
     if (!token) return;
-    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-my-reward-pass`, { headers: { Authorization: 'Bearer ' + token } })
-      .then(r => r.json()).then(data => setRewardPassData(data.data || [])).catch(() => setRewardPassData([]));
-  }, [token]);
+    cachedFetch(`${PROFILE_API_BASE}/api/auth/tidebt-my-reward-pass`, setRewardPassData, d => d.data || [], 'ebt_rewardpass');
+  }, [token, cachedFetch]);
 
   // Fetch BT performance from BT_TL_CONNECT {MONTH} — refetch when month or year changes
   useEffect(() => {
@@ -272,57 +284,58 @@ export default function Dashboard() {
     const params = new URLSearchParams();
     if (selectedMonth) params.set('selectedMonth', selectedMonth);
     if (selectedYear) params.set('selectedYear', selectedYear);
-    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-bt-performance?${params.toString()}`, {
-      headers: { Authorization: 'Bearer ' + token }
-    })
-      .then(r => r.json())
-      .then(data => { if (data.success) setBtPerf(data); else setBtPerf(null); })
-      .catch(() => setBtPerf(null));
+    cachedFetch(
+      `${PROFILE_API_BASE}/api/auth/tidebt-bt-performance?${params.toString()}`,
+      d => { if (d.success) setBtPerf(d); else setBtPerf(null); },
+      d => d,
+      `ebt_btperf_${selectedMonth}_${selectedYear}`
+    );
 
-    // Previous month — for accurate carry-forward Used calculation
+    // Previous month
     const prevParams = new URLSearchParams();
     prevParams.set('selectedMonth', prevMonthName);
     prevParams.set('selectedYear', String(prevYear));
-    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-bt-performance?${prevParams.toString()}`, {
-      headers: { Authorization: 'Bearer ' + token }
-    })
-      .then(r => r.json())
-      .then(data => { if (data.success) setPrevBtPerf(data); else setPrevBtPerf(null); })
-      .catch(() => setPrevBtPerf(null));
+    cachedFetch(
+      `${PROFILE_API_BASE}/api/auth/tidebt-bt-performance?${prevParams.toString()}`,
+      d => { if (d.success) setPrevBtPerf(d); else setPrevBtPerf(null); },
+      d => d,
+      `ebt_btperf_${prevMonthName}_${prevYear}`
+    );
 
-    // Annual summary — all months for cumulative carry-forward
+    // Annual summary
     const yearStr = String(curYear);
-    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-annual-bt-summary?year=${yearStr}`, {
-      headers: { Authorization: 'Bearer ' + token }
-    })
-      .then(r => r.json())
-      .then(data => { if (data.success) setAnnualBtSummary(data); else setAnnualBtSummary(null); })
-      .catch(() => setAnnualBtSummary(null));
-  }, [token, selectedMonth, selectedYear]);
+    cachedFetch(
+      `${PROFILE_API_BASE}/api/auth/tidebt-annual-bt-summary?year=${yearStr}`,
+      d => { if (d.success) setAnnualBtSummary(d); else setAnnualBtSummary(null); },
+      d => d,
+      `ebt_annual_${yearStr}`
+    );
+  }, [token, selectedMonth, selectedYear, cachedFetch]);
 
   useEffect(() => {
     if (!token) return;
     const targetMonth = selectedMonth || '';
     const targetYear  = selectedYear || '';
-    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-my-target?month=${targetMonth}&year=${targetYear}`, { headers: { Authorization: 'Bearer ' + token } })
-      .then(r => r.json()).then(data => setMyTarget(data.target || null)).catch(() => setMyTarget(null));
-  }, [token, selectedMonth, selectedYear]);
+    cachedFetch(
+      `${PROFILE_API_BASE}/api/auth/tidebt-my-target?month=${targetMonth}&year=${targetYear}`,
+      setMyTarget,
+      d => d.target || null,
+      `ebt_target_${targetMonth}_${targetYear}`
+    );
+  }, [token, selectedMonth, selectedYear, cachedFetch]);
 
   useEffect(() => {
     if (!token) return;
     const params = new URLSearchParams();
     if (selectedMonth) params.set('selectedMonth', selectedMonth);
     if (selectedYear) params.set('selectedYear', selectedYear);
-    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-team-performance?${params.toString()}`, {
-      headers: { Authorization: 'Bearer ' + token }
-    })
-      .then(r => r.json())
-      .then(data => {
-        if (data.success) setTeamPerformance(data);
-        else setTeamPerformance(null);
-      })
-      .catch(() => setTeamPerformance(null));
-  }, [token, selectedMonth, selectedYear]);
+    cachedFetch(
+      `${PROFILE_API_BASE}/api/auth/tidebt-team-performance?${params.toString()}`,
+      d => { if (d.success) setTeamPerformance(d); else setTeamPerformance(null); },
+      d => d,
+      `ebt_teamperf_${selectedMonth}_${selectedYear}`
+    );
+  }, [token, selectedMonth, selectedYear, cachedFetch]);
 
   const handleAddExpense = async () => {
     if (!expenseAmount || !expensePurpose) return;
