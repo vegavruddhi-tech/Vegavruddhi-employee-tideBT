@@ -241,6 +241,24 @@ export default function Dashboard() {
       .catch(() => {});
   }, [token]);
 
+  // ── Background prefetch all months so switching is instant ───────────────
+  useEffect(() => {
+    if (!token) return;
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const curYear = new Date().getFullYear().toString();
+    const timer = setTimeout(() => {
+      MONTH_NAMES.forEach(month => {
+        const ckBt = `ebt_btperf_${month}_${curYear}`;
+        if (!localStorage.getItem(ckBt)) {
+          const p = new URLSearchParams({ selectedMonth: month, selectedYear: curYear });
+          fetch(`${PROFILE_API_BASE}/api/auth/tidebt-bt-performance?${p}`, { headers: { Authorization: 'Bearer ' + token } })
+            .then(r => r.json()).then(d => localStorage.setItem(ckBt, JSON.stringify(d))).catch(() => {});
+        }
+      });
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [token]);
+
   // ── Data fetching ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!token) { navigate('/'); return; }
