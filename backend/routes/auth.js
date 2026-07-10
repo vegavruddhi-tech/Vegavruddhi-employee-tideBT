@@ -1197,4 +1197,101 @@ router.get('/tidebt-annual-bt-summary', verifyToken, async (req, res) => {
   }
 });
 
+// GET /api/auth/tidebt-carry-forward?month=July&year=2026
+// Returns correct cumulative carry-forward for this employee.
+// Accounts for: received fund, BT/RP costs, AND fund distributed to others (when acting as TL).
+// No MongoDB cache — must always be fresh (admin panel adds payments on different backend).
+router.get('/tidebt-carry-forward', verifyToken, async (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  try {
+    const employee = await Employee.findById(req.user.id).select('newJoinerName email');
+    if (!employee) return res.status(404).json({ message: 'Employee not found' });
+
+    const { month, year } = req.query;
+    if (!month || !year) return res.json({ success: true, carryForward: 0 });
+
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const MONTH_ABBR  = { 'JANUARY':'JAN','FEBRUARY':'FEB','MARCH':'MAR','APRIL':'APR','MAY':'MAY','JUNE':'JUN','JULY':'JUL','AUGUST':'AUG','SEPTEMBER':'SEP','OCTOBER':'OCT','NOVEMBER':'NOV','DECEMBER':'DEC' };
+
+    const curMonthIdx = MONTH_NAMES.indexOf(month);
+    if (curMonthIdx <= 0) return res.json({ success: true, carryForward: 0 });
+
+    const curYear   = parseInt(year);
+    const pastMonths = MONTH_NAMES.slice(0, curMonthIdx);
+    const empName   = employee.newJoinerName.trim().toLowerCase();
+    const escape    = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    const db = mongoose.connection.db;
+
+    // All payments involving this employee (as receiver)
+    const allPayments = await db.collection('TideBT_Payments').find({}).toArray();
+
+    // bt_master merchant numbers for BT cost calculation
+    const masterDocs = await db.collection('bt_master').find({
+      fseName: { $regex: new RegExp(`^\\s*${escape(employee.newJoinerName.trim())}\\s*\\d*\\s*$`, 'i') }
+    }, { projection: { merchantNumber: 1 } }).toArray();
+    const myNums = masterDocs.map(m => (m.merchantNumber||'').trim()).filter(Boolean);
+
+    // BT collection finder
+    const allCollections = (await db.listCollections().toArray()).map(c => c.name);
+    const findBTCol = (monthName) => {
+      const mu = monthName.toUpperCase(); const abbr = MONTH_ABBR[mu]||mu;
+      const btCols = allCollections.filter(c => c.toUpperCase().startsWith('BT_TL_CONNECT'));
+      const sy = String(curYear).slice(-2);
+      const m  = btCols.find(c => { const cu=c.toUpperCase(); return (cu.includes(mu)||cu.includes(abbr))&&(cu.includes(String(curYear))||cu.includes(sy)); });
+      return m || btCols.find(c => { const cu=c.toUpperCase(); return cu.includes(mu)||cu.includes(abbr); }) || null;
+    };
+
+    let runningBalance = 0;
+
+    for (const monthName of pastMonths) {
+      // Received in this month
+      const monthReceived = allPayments
+        .filter(p => {
+          if (!p.createdAt) return false;
+          const d = new Date(p.createdAt);
+          return d.getFullYear() === curYear && MONTH_NAMES[d.getMonth()] === monthName &&
+                 (p.transferTo||'').trim().toLowerCase() === empName;
+        })
+        .reduce((s, p) => s + (p.amount||0), 0);
+
+      // Sent to others this month (when acting as TL/distributor)
+      const monthSent = allPayments
+        .filter(p => {
+          if (!p.createdAt) return false;
+          const d = new Date(p.createdAt);
+          const sender   = (p.senderName||'').trim().toLowerCase();
+          const receiver = (p.transferTo||'').trim().toLowerCase();
+          return d.getFullYear() === curYear && MONTH_NAMES[d.getMonth()] === monthName &&
+                 sender === empName && receiver !== empName;
+        })
+        .reduce((s, p) => s + (p.amount||0), 0);
+
+      // BT/RP costs this month
+      let btAmount = 0, rpCount = 0;
+      const btCol = findBTCol(monthName);
+      if (btCol && myNums.length > 0) {
+        const btDocs = await db.collection(btCol).find(
+          { merchantNumber: { $in: myNums } },
+          { projection: { stage3: 1, rewardPassPro: 1, priorityPassPro: 1 } }
+        ).toArray();
+        btDocs.forEach(r => {
+          btAmount += parseFloat(String(r.stage3||'0').replace(/,/g,''))||0;
+          if ((r.rewardPassPro||r.priorityPassPro||'').toLowerCase()==='active') rpCount++;
+        });
+      }
+      const rpCost = rpCount * 2500;
+      const fee    = Math.round((btAmount > 10000 ? btAmount * 0.015 : 0) * 100) / 100;
+
+      const net = monthReceived - monthSent - rpCost - fee;
+      runningBalance = Math.max(0, runningBalance + net);
+    }
+
+    res.json({ success: true, carryForward: Math.round(runningBalance * 100) / 100 });
+  } catch (err) {
+    console.error('Carry forward error:', err.message);
+    res.status(500).json({ message: err.message });
+  }
+});
+
 module.exports = router;

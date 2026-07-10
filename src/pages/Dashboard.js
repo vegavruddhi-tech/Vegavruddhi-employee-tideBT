@@ -193,7 +193,7 @@ export default function Dashboard() {
     return runningBalance;
   }, [receivedPayments, prevBtPerf, annualBtSummary, myForms, selectedMonth, selectedYear]);
 
-  const totalAvailable    = totalFund + carryForward;
+  const totalAvailable    = totalFund + (serverCarryForward !== null ? serverCarryForward : carryForward);
   const fundLeftWithCarry = totalAvailable - totalUsed;
 
   // Helper to format a Date to YYYY-MM-DD local string
@@ -343,6 +343,19 @@ export default function Dashboard() {
       .then(r => r.json())
       .then(d => setMyTarget(d.target || null))
       .catch(() => {});
+  }, [token, selectedMonth, selectedYear]);
+
+  // Fetch server-computed carry forward (accounts for sent-to-FSEs when acting as TL)
+  const [serverCarryForward, setServerCarryForward] = useState(null); // null = not loaded yet
+  useEffect(() => {
+    if (!token || !selectedMonth || !selectedYear) { setServerCarryForward(null); return; }
+    fetch(
+      `${PROFILE_API_BASE}/api/auth/tidebt-carry-forward?month=${selectedMonth}&year=${selectedYear}`,
+      { headers: { Authorization: 'Bearer ' + token }, cache: 'no-store' }
+    )
+      .then(r => r.json())
+      .then(d => setServerCarryForward(d.success ? (d.carryForward || 0) : null))
+      .catch(() => setServerCarryForward(null));
   }, [token, selectedMonth, selectedYear]);
 
   useEffect(() => {
@@ -839,8 +852,8 @@ export default function Dashboard() {
             </div>
             <div style={{ textAlign: 'right' }}>
               <div style={{ fontSize: 10, color: '#888', fontWeight: 600 }}>Carry Into {selectedMonth || 'This Month'}</div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: carryForward >= 0 ? '#1565c0' : '#c62828' }}>
-                ₹{carryForward.toLocaleString()}
+              <div style={{ fontSize: 18, fontWeight: 800, color: (serverCarryForward !== null ? serverCarryForward : carryForward) >= 0 ? '#1565c0' : '#c62828' }}>
+                ₹{(serverCarryForward !== null ? serverCarryForward : carryForward).toLocaleString()}
               </div>
             </div>
           </div>
@@ -856,7 +869,7 @@ export default function Dashboard() {
               border: totalFund < 0 ? '#c6282830' : '#2e7d3230',
               sub: totalFund < 0 ? 'Returned to Admin' : 'Net Received'
             },
-            { label: 'Carry Forward', value: `₹${carryForward.toLocaleString()}`,        bg: '#e8f5e9', color: '#388e3c', border: '#43a04730', sub: `From ${prevMonthData.prevMonthName}` },
+            { label: 'Carry Forward', value: `₹${(serverCarryForward !== null ? serverCarryForward : carryForward).toLocaleString()}`, bg: '#e8f5e9', color: '#388e3c', border: '#43a04730', sub: `From ${prevMonthData.prevMonthName}` },
             { label: 'Total Available', value: `₹${totalAvailable.toLocaleString()}`,   bg: '#f1f8e9', color: '#1b5e20', border: '#2e7d3240', sub: 'This Month + Carry' },
             { label: 'BT',             value: `₹${fundUsedBT.toLocaleString()}`,         bg: '#fff3e0', color: '#e65100', border: '#e6510030', sub: 'Used' },
             { label: `RP ${totalRPCount}×₹2,500`, value: `₹${fundUsedRP.toLocaleString()}`, bg: '#ede9fe', color: '#7c3aed', border: '#7c3aed30', sub: 'Used' },
