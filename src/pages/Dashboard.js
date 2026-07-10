@@ -827,7 +827,7 @@ export default function Dashboard() {
         <div className="section-title" style={{ marginTop: 24, marginBottom: 12 }}>💰 Fund Summary</div>
 
         {/* Previous month carry-forward banner */}
-        {prevMonthData.prevReceived > 0 && (
+        {(prevMonthData.prevReceived !== 0 || carryForward > 0) && (
           <div style={{ background: 'linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%)', borderRadius: 12, padding: '12px 14px', marginBottom: 12, border: '1.5px solid #a5d6a7', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
             <div>
               <div style={{ fontSize: 10, fontWeight: 700, color: '#2e7d32', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
