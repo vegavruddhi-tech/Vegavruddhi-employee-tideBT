@@ -30,21 +30,19 @@ const findConnectCollection = async (db, selectedMonth, selectedYear) => {
   };
   const monthAbbr = MONTH_ABBR[monthUpper] || monthUpper;
 
-  // Search BT_TL_CONNECT first (new format), then TL_CONNECT / tl_connect (old format)
+  // Only use BT_TL_CONNECT* collections — never tl_connect_*
   const btCollections = allCollections.filter(c => c.toUpperCase().startsWith('BT_TL_CONNECT'));
-  const tlCollections = allCollections.filter(c => c.toUpperCase().includes('TL_CONNECT') && !c.toUpperCase().startsWith('BT_TL_CONNECT'));
-  const candidateCollections = [...btCollections, ...tlCollections];
 
   const matchesMonth = (cu) => cu.includes(monthUpper) || cu.includes(monthAbbr);
 
   if (yearStr) {
-    const match = candidateCollections.find(c => {
+    const match = btCollections.find(c => {
       const cu = c.toUpperCase();
       return matchesMonth(cu) && (cu.includes(yearStr) || cu.includes(shortYear));
     });
     if (match) return match;
   }
-  const match = candidateCollections.find(c => matchesMonth(c.toUpperCase()));
+  const match = btCollections.find(c => matchesMonth(c.toUpperCase()));
   if (match) return match;
 
   return null;
@@ -147,6 +145,42 @@ router.post('/google-login', async (req, res) => {
       { expiresIn: '8h' }
     );
 
+    // ── Mark Attendance for TideBT Employee ───────────────────────────────
+    try {
+      const db = mongoose.connection.db;
+      const now = new Date();
+      const istTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      const today = istTime.toISOString().split('T')[0];
+
+      const existing = await db.collection('Attendance').findOne({ userId: employee._id, date: today });
+      if (!existing) {
+        await db.collection('Attendance').insertOne({
+          userId: employee._id,
+          userEmail: employee.email,
+          userName: employee.newJoinerName,
+          userType: 'employee',
+          date: today,
+          firstLoginTime: now,
+          lastActivityTime: now,
+          attendanceMarked: true,
+          reloginCount: 0,
+          status: 'present',
+          source: 'tidebt-employee',
+          createdAt: now,
+        });
+        console.log(`✅ Attendance marked (TideBT FSE): ${employee.email}`);
+      } else {
+        await db.collection('Attendance').updateOne(
+          { userId: employee._id, date: today },
+          { $set: { lastActivityTime: now, lastLogoutTime: null, duration: null }, $inc: { reloginCount: 1 } }
+        );
+        console.log(`✅ Re-login (TideBT FSE): ${employee.email}`);
+      }
+    } catch (attErr) {
+      console.error('Attendance marking error (FSE):', attErr.message);
+    }
+    // ──────────────────────────────────────────────────────────────────────
+
     res.json({ token, user: employee });
   } catch (err) {
     console.error('Google login error:', err.message);
@@ -232,6 +266,32 @@ router.post('/tidebt-daily-visit', verifyToken, async (req, res) => {
     // ── Bust this employee's merchant cache (new visit = data changed) ────
     const { cacheInvalidatePattern, cacheKey } = require('../utils/cache');
     await cacheInvalidatePattern(`EMP_MERCHANTS:${employee.newJoinerName.trim().replace(/\s+/g,'_').toUpperCase()}:*`);
+
+    // ── Auto-add to bt_master if merchant not already there ───────────────
+    try {
+      const db = mongoose.connection.db;
+      const existing = await db.collection('bt_master').findOne({ merchantNumber });
+      if (!existing && merchantNumber) {
+        // Get TL name from TideBT_Access for this FSE
+        const accessRecord = await db.collection('TideBT_Access').findOne({
+          fseName: { $regex: new RegExp(`^\\s*${employee.newJoinerName.trim()}\\s*$`, 'i') }
+        });
+        await db.collection('bt_master').insertOne({
+          merchantNumber,
+          merchantName:  merchantName  || '',
+          merchantEmail: merchantEmailId || '',
+          fseName:       employee.newJoinerName,
+          fseEmail:      employee.email,
+          tl:            accessRecord?.tlName || '',
+          _syncedAt:     new Date(),
+          _source:       'tidebt-form-auto'
+        });
+        console.log(`✅ Auto-added to bt_master: ${merchantNumber} for FSE ${employee.newJoinerName}`);
+      }
+    } catch (btErr) {
+      console.error('bt_master auto-insert error (non-fatal):', btErr.message);
+    }
+    // ─────────────────────────────────────────────────────────────────────
 
     res.status(201).json({ message: 'Daily visit form submitted', form: formResponse });
   } catch (err) {
@@ -1079,16 +1139,15 @@ router.get('/tidebt-annual-bt-summary', verifyToken, async (req, res) => {
     const monthResults = await Promise.all(MONTH_NAMES.map(async (monthName) => {
       const monthUpper = monthName.toUpperCase();
       const monthAbbr  = MONTH_ABBR[monthUpper] || monthUpper;
+      // Only use BT_TL_CONNECT* collections — never tl_connect_*
       const btCols = allCollections.filter(c => c.toUpperCase().startsWith('BT_TL_CONNECT'));
-      const tlCols = allCollections.filter(c => c.toUpperCase().includes('TL_CONNECT') && !c.toUpperCase().startsWith('BT_TL_CONNECT'));
-      const candidates = [...btCols, ...tlCols];
       const matchesMonth = (cu) => cu.includes(monthUpper) || cu.includes(monthAbbr);
 
-      let colName = candidates.find(c => {
+      let colName = btCols.find(c => {
         const cu = c.toUpperCase();
         return matchesMonth(cu) && (cu.includes(yearStr) || cu.includes(shortYear));
       });
-      if (!colName) colName = candidates.find(c => matchesMonth(c.toUpperCase()));
+      if (!colName) colName = btCols.find(c => matchesMonth(c.toUpperCase()));
       if (!colName) return { month: monthName, btAmount: 0, rewardPassCount: 0, passLiveCount: 0, collectionFound: false };
 
       // Query 1: match by current merchant numbers (bt_master)

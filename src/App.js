@@ -54,8 +54,8 @@ function AutoLogoutHandler() {
       
       alert('Your session has ended at 11:59 PM. Please login again tomorrow.');
       
-      navigate('/');
-      window.location.reload();
+      // Redirect to main employee dashboard (not TideBT login)
+      window.location.href = 'https://vegavruddhi-employee-panel-ke56.vercel.app/';
     };
     
     // Check every 30 seconds
