@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
+import ImpersonationBanner from '../components/ImpersonationBanner';
 
 const PROFILE_API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:4001';
 
@@ -9,6 +10,35 @@ const MONTHS = ['January','February','March','April','May','June','July','August
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const [isImpersonating, setIsImpersonating] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('token') && params.get('viewAs')) {
+      localStorage.setItem('token', params.get('token'));
+      localStorage.setItem('viewAsEmail', params.get('viewAs'));
+      localStorage.setItem('isImpersonating', 'true');
+      return true;
+    }
+    return localStorage.getItem('isImpersonating') === 'true';
+  });
+  const [viewAsEmail, setViewAsEmail] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('viewAs') || localStorage.getItem('viewAsEmail') || '';
+  });
+
+  const handleExitImpersonation = () => {
+    localStorage.removeItem('isImpersonating');
+    localStorage.removeItem('viewAsEmail');
+    localStorage.removeItem('token');
+    if (window.opener && !window.opener.closed) {
+      window.close();
+    } else {
+      const adminAppUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+        ? 'http://localhost:3002'
+        : 'https://vegavruddhi-admin-panel.vercel.app';
+      window.location.href = adminAppUrl;
+    }
+  };
+
   const token = localStorage.getItem('token');
   const [emp, setEmp] = useState(null);
   const [myForms, setMyForms] = useState([]);
@@ -112,7 +142,7 @@ export default function Dashboard() {
     };
 
     // Fund received in prev month
-    const prevReceived = receivedPayments
+    const prevReceived = (Array.isArray(receivedPayments) ? receivedPayments : [])
       .filter(p => isInPrevMonth(p.createdAt))
       .reduce((s, p) => s + (p.amount || 0), 0);
 
@@ -205,7 +235,7 @@ export default function Dashboard() {
   const todayBT = useMemo(() => {
     const ref = (dateFilter === 'custom' && toDate) ? new Date(toDate) : new Date();
     const refStr = toLocalDateStr(ref);
-    return rewardPassData
+    return (Array.isArray(rewardPassData) ? rewardPassData : [])
       .filter(r => {
         const d = new Date(r.dateOfWorking || r.createdAt || '');
         return !isNaN(d) && toLocalDateStr(d) === refStr;
@@ -218,7 +248,7 @@ export default function Dashboard() {
     const base = (dateFilter === 'custom' && toDate) ? new Date(toDate) : new Date();
     const ref = new Date(base); ref.setDate(ref.getDate() - 1);
     const refStr = toLocalDateStr(ref);
-    return rewardPassData
+    return (Array.isArray(rewardPassData) ? rewardPassData : [])
       .filter(r => {
         const d = new Date(r.dateOfWorking || r.createdAt || '');
         return !isNaN(d) && toLocalDateStr(d) === refStr;
@@ -643,6 +673,12 @@ export default function Dashboard() {
     <>
       <Navbar emp={emp} token={token} />
       <div className="main-content">
+        <ImpersonationBanner
+          isImpersonating={isImpersonating}
+          targetName={emp?.newJoinerName || emp?.name || viewAsEmail}
+          targetEmail={viewAsEmail}
+          onExit={handleExitImpersonation}
+        />
 
         {/* Welcome card */}
         <div className="welcome-card" style={{ padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
