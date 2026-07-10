@@ -334,13 +334,16 @@ export default function Dashboard() {
     if (!token) return;
     const targetMonth = selectedMonth || '';
     const targetYear  = selectedYear || '';
-    cachedFetch(
+    // No localStorage cache for targets — admin sets them on a different backend,
+    // stale cache would hide the target. Always fetch fresh.
+    fetch(
       `${PROFILE_API_BASE}/api/auth/tidebt-my-target?month=${targetMonth}&year=${targetYear}`,
-      setMyTarget,
-      d => d.target || null,
-      `ebt_target_${targetMonth}_${targetYear}`
-    );
-  }, [token, selectedMonth, selectedYear, cachedFetch]);
+      { headers: { Authorization: 'Bearer ' + token }, cache: 'no-store' }
+    )
+      .then(r => r.json())
+      .then(d => setMyTarget(d.target || null))
+      .catch(() => {});
+  }, [token, selectedMonth, selectedYear]);
 
   useEffect(() => {
     if (!token) return;
