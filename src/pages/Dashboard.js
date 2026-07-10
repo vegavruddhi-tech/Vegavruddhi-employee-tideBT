@@ -30,6 +30,7 @@ export default function Dashboard() {
 
   // Selected KPI for bottom sheet details
   const [activeKpi, setActiveKpi] = useState(null);
+  const [serverCarryForward, setServerCarryForward] = useState(null); // server-computed carry forward
 
   // Date filter state — default to all data, user can filter by month
   const [dateFilter, setDateFilter] = useState('all');
@@ -346,7 +347,6 @@ export default function Dashboard() {
   }, [token, selectedMonth, selectedYear]);
 
   // Fetch server-computed carry forward (accounts for sent-to-FSEs when acting as TL)
-  const [serverCarryForward, setServerCarryForward] = useState(null); // null = not loaded yet
   useEffect(() => {
     if (!token || !selectedMonth || !selectedYear) { setServerCarryForward(null); return; }
     fetch(
