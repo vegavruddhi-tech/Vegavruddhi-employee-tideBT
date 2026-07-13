@@ -30,8 +30,14 @@ const findConnectCollection = async (db, selectedMonth, selectedYear) => {
   };
   const monthAbbr = MONTH_ABBR[monthUpper] || monthUpper;
 
-  // Only use BT_TL_CONNECT* collections — never tl_connect_*
-  const btCollections = allCollections.filter(c => c.toUpperCase().startsWith('BT_TL_CONNECT'));
+  // Only use BT_TL_CONNECT* collections — prefer canonical uppercase+space format
+  const btCollections = allCollections
+    .filter(c => c.toUpperCase().startsWith('BT_TL_CONNECT'))
+    .sort((a, b) => {
+      const aScore = (a.includes(' ') ? 2 : 0) + (a === a.toUpperCase() ? 1 : 0);
+      const bScore = (b.includes(' ') ? 2 : 0) + (b === b.toUpperCase() ? 1 : 0);
+      return bScore - aScore;
+    });
 
   const matchesMonth = (cu) => cu.includes(monthUpper) || cu.includes(monthAbbr);
 
