@@ -153,11 +153,23 @@ router.post('/google-login', async (req, res) => {
       const today = istTime.toISOString().split('T')[0];
 
       const existing = await db.collection('Attendance').findOne({ userId: employee._id, date: today });
+
+      // Look up fseName from TideBT_Access — use this for userName in attendance
+      // so attendance page can match by TideBT_Access.fseName correctly
+      const accessRecord = await db.collection('TideBT_Access').findOne({
+        $or: [
+          { fseName: { $regex: new RegExp(`^\\s*${employee.newJoinerName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'i') } },
+          { fseEmail: { $regex: new RegExp(`^${(employee.email||'').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } }
+        ]
+      });
+      // Use fseName from TideBT_Access if available (handles name mismatches like FASHAL ALI → Faisal Khan)
+      const attendanceName = accessRecord?.fseName?.trim() || employee.newJoinerName.trim();
+
       if (!existing) {
         await db.collection('Attendance').insertOne({
           userId: employee._id,
           userEmail: employee.email,
-          userName: employee.newJoinerName,
+          userName: attendanceName,
           userType: 'employee',
           date: today,
           firstLoginTime: now,
@@ -168,11 +180,11 @@ router.post('/google-login', async (req, res) => {
           source: 'tidebt-employee',
           createdAt: now,
         });
-        console.log(`✅ Attendance marked (TideBT FSE): ${employee.email}`);
+        console.log(`✅ Attendance marked (TideBT FSE): ${employee.email} as "${attendanceName}"`);
       } else {
         await db.collection('Attendance').updateOne(
           { userId: employee._id, date: today },
-          { $set: { lastActivityTime: now, lastLogoutTime: null, duration: null }, $inc: { reloginCount: 1 } }
+          { $set: { lastActivityTime: now, lastLogoutTime: null, duration: null, userName: attendanceName }, $inc: { reloginCount: 1 } }
         );
         console.log(`✅ Re-login (TideBT FSE): ${employee.email}`);
       }
