@@ -434,7 +434,10 @@ export default function Dashboard() {
   const isFilterActive = dateFilter !== 'all' || fromDate || toDate || selectedMonth !== currentMonth || selectedYear !== currentYear;
 
   const getKpiDetails = (kpiLabel) => {
-    const remainingBTVal = myTarget?.btTarget ? Math.max(0, myTarget.btTarget - (btPerf?.btAmount || fundUsedBT)) : 0;
+    const btBaseline0    = myTarget?.btBaseline || 0;
+    const btActual       = btPerf?.btAmount || fundUsedBT;
+    const btIncremental  = Math.max(0, btActual - btBaseline0);
+    const remainingBTVal = myTarget?.btTarget ? Math.max(0, myTarget.btTarget - btIncremental) : 0;
     const remainingRPVal = myTarget?.rpTarget ? Math.max(0, myTarget.rpTarget - totalRPCount) : 0;
 
     // Helper: merchant list from btPerf
@@ -461,7 +464,10 @@ export default function Dashboard() {
         };
 
       case 'BT Amount': {
-        const btCompleted = btPerf ? (btPerf.btAmount || 0) : fundUsedBT;
+        const btCompletedRaw = btPerf ? (btPerf.btAmount || 0) : fundUsedBT;
+        const btBaseline = myTarget ? (myTarget.btBaseline || 0) : 0;
+        // Incremental BT = total BT - baseline at time target was set
+        const btCompleted = Math.max(0, btCompletedRaw - btBaseline);
         const assignedBtTarget = myTarget ? (myTarget.btTarget || 0) : 0;
         const remainingTarget = assignedBtTarget > 0 ? Math.max(0, assignedBtTarget - btCompleted) : 0;
         const achievementPct = assignedBtTarget > 0 ? Math.round((btCompleted / assignedBtTarget) * 100) : 0;
@@ -553,21 +559,24 @@ export default function Dashboard() {
           }]
         };
 
-      case 'BT Target':
+      case 'BT Target': {
+        const btBaselineKpi = myTarget?.btBaseline || 0;
+        const btIncrementalKpi = Math.max(0, fundUsedBT - btBaselineKpi);
         return {
           title: 'BT Target',
           totalValue: `₹${(myTarget?.btTarget || 0).toLocaleString()}`,
-          desc: 'Your monthly target for Bank Transfer amount.',
+          desc: 'Your target for Bank Transfer amount (incremental since target was set).',
           type: 'remaining',
           color: 'bg-primary',
           items: [{
             name: emp?.newJoinerName || 'My Target',
             targetValue: `₹${(myTarget?.btTarget || 0).toLocaleString()}`,
-            actualValue: `₹${fundUsedBT.toLocaleString()}`,
-            value: myTarget?.btTarget ? (Math.max(0, myTarget.btTarget - fundUsedBT) > 0 ? `₹${Math.max(0, myTarget.btTarget - fundUsedBT).toLocaleString()} remaining` : 'Achieved! 🎉') : '–',
-            percentage: myTarget?.btTarget ? Math.min(100, Math.round((fundUsedBT / myTarget.btTarget) * 100)) : 0
+            actualValue: `₹${btIncrementalKpi.toLocaleString()}`,
+            value: myTarget?.btTarget ? (Math.max(0, myTarget.btTarget - btIncrementalKpi) > 0 ? `₹${Math.max(0, myTarget.btTarget - btIncrementalKpi).toLocaleString()} remaining` : 'Achieved! 🎉') : '–',
+            percentage: myTarget?.btTarget ? Math.min(100, Math.round((btIncrementalKpi / myTarget.btTarget) * 100)) : 0
           }]
         };
+      }
 
       case "Today's BT": {
         const ref = (dateFilter === 'custom' && toDate) ? new Date(toDate) : new Date();
@@ -632,7 +641,9 @@ export default function Dashboard() {
         };
       }
 
-      case 'Remaining BT Target':
+      case 'Remaining BT Target': {
+        const btBaselineR = myTarget?.btBaseline || 0;
+        const btIncrementalR = Math.max(0, fundUsedBT - btBaselineR);
         return {
           title: 'Remaining BT Target',
           totalValue: `₹${remainingBTVal.toLocaleString()}`,
@@ -642,11 +653,12 @@ export default function Dashboard() {
           items: [{
             name: emp?.newJoinerName || 'My Target',
             targetValue: `₹${(myTarget?.btTarget || 0).toLocaleString()}`,
-            actualValue: `₹${fundUsedBT.toLocaleString()}`,
+            actualValue: `₹${btIncrementalR.toLocaleString()}`,
             value: myTarget?.btTarget ? (remainingBTVal > 0 ? `₹${remainingBTVal.toLocaleString()} remaining` : 'Achieved! 🎉') : '–',
-            percentage: myTarget?.btTarget ? Math.min(100, Math.round((fundUsedBT / myTarget.btTarget) * 100)) : 0
+            percentage: myTarget?.btTarget ? Math.min(100, Math.round((btIncrementalR / myTarget.btTarget) * 100)) : 0
           }]
         };
+      }
 
       case 'Remaining RP Target':
         return {

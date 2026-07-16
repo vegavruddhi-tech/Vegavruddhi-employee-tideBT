@@ -540,6 +540,8 @@ router.get('/tidebt-my-target', verifyToken, async (req, res) => {
     const target = {
       btTarget: targets.reduce((sum, t) => sum + (t.btTarget || 0), 0),
       rpTarget: targets.reduce((sum, t) => sum + (t.rpTarget || 0), 0),
+      // Use the most recent target's baseline (for consecutive target periods)
+      btBaseline: targets.reduce((sum, t) => sum + (t.btBaseline || 0), 0),
       month:    month || targets[0].month,
       year:     year  || targets[0].year,
       endDate:  targets[0].endDate || null,
