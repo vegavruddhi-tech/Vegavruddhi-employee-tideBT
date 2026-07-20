@@ -146,7 +146,14 @@ export default function MyMerchants() {
       if (btOnlyFilter && !(m.stage3 > 0)) return false;
       // Pending filter — BT Left or RP Left
       if (pendingFilter === 'bt-left' && !(m.stage3Gap > 0)) return false;
-      if (pendingFilter === 'rp-left' && (m.rewardPassPro || '').toLowerCase() === 'active') return false;
+      // RP Left = merchant has BT done (stage3 > 0) but RP not yet active AND pass not live
+      // These are prime candidates for RP activation
+      if (pendingFilter === 'rp-left') {
+        const rpActive  = (m.rewardPassPro || '').toLowerCase() === 'active';
+        const passLive  = (m.passLive || '').toLowerCase() === 'live';
+        // If RP is already active OR pass is already live → not "RP Left"
+        if (rpActive || passLive) return false;
+      }
       return true;
     });
   }, [merchants, search, statusFilter, verifiedFilter, btOnlyFilter, btAmountRange, matchesBtRange, pendingFilter]);

@@ -828,20 +828,20 @@ export default function Dashboard() {
               icon: '📱', color: '#0284c7', bg: '#e0f2fe',
               sublabel: btPerf ? `Txn: ${btPerf.upiTxnCount} · Gap: ₹${(btPerf.upiGap || 0).toLocaleString()}` : null
             },
+            { label: 'UPI % of BT',
+              value: (() => {
+                const bt  = btPerf?.btAmount  || 0;
+                const upi = btPerf?.upiAmount || 0;
+                if (!bt || !upi) return '–';
+                return `${Math.round((upi / bt) * 100)}%`;
+              })(),
+              icon: '📊', color: '#0369a1', bg: '#dbeafe',
+              sublabel: btPerf
+                ? `UPI ₹${(btPerf.upiAmount || 0).toLocaleString()} of BT ₹${(btPerf.btAmount || 0).toLocaleString()}`
+                : null
+            },
             { label: 'RP Target',             value: myTarget?.rpTarget || '–',                                                icon: '🎁', color: '#4338ca', bg: '#ede9fe' },
             { label: 'BT Target',             value: myTarget?.btTarget ? `₹${myTarget.btTarget.toLocaleString()}` : '–',      icon: '🎯', color: '#b45309', bg: '#fef3c7' },
-            { label: "Today's BT",
-              value: (() => {
-                // Only show today's BT if the selected month matches the BT collection month
-                // Otherwise the todaysStage3 field is from a different month (live rolling field)
-                const collMonth = btPerf?.collectionMonth; // e.g. "May"
-                const isMatchingMonth = !selectedMonth || (collMonth && collMonth.toLowerCase() === selectedMonth.toLowerCase());
-                if (btPerf && isMatchingMonth) return `₹${(btPerf.todaysBT || 0).toLocaleString()}`;
-                return '₹0';
-              })(),
-              icon: '📈', color: '#0f766e', bg: '#ccfbf1',
-              sublabel: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
-            },
             { label: "Yesterday's BT",
               value: (() => {
                 const collMonth = btPerf?.collectionMonth;
