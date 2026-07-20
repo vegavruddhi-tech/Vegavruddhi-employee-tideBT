@@ -49,6 +49,7 @@ export default function MyMerchants() {
   const [btAmountRange,  setBtAmountRange]  = useState(''); // BT amount range filter
   const [btOnlyFilter,   setBtOnlyFilter]   = useState(false); // show only merchants with BT this month
   const [pendingFilter,  setPendingFilter]  = useState(''); // 'bt-left' | 'rp-left' | ''
+  const [btSort,         setBtSort]         = useState('');  // '' | 'asc' | 'desc'
 
   const BT_AMOUNT_RANGES = [
     { label: 'All Amounts',       value: '' },
@@ -158,9 +159,19 @@ export default function MyMerchants() {
     });
   }, [merchants, search, statusFilter, verifiedFilter, btOnlyFilter, btAmountRange, matchesBtRange, pendingFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paged      = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  useEffect(() => setPage(1), [search, statusFilter, verifiedFilter, btOnlyFilter, btAmountRange, pendingFilter]);
+  // ── Sort by BT amount ─────────────────────────────────────────────────────
+  const sortedFiltered = useMemo(() => {
+    if (!btSort) return filtered;
+    return [...filtered].sort((a, b) => {
+      const aVal = parseFloat(String(a.stage3 || '0').replace(/,/g, '')) || 0;
+      const bVal = parseFloat(String(b.stage3 || '0').replace(/,/g, '')) || 0;
+      return btSort === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+  }, [filtered, btSort]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedFiltered.length / PAGE_SIZE));
+  const paged      = sortedFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  useEffect(() => setPage(1), [search, statusFilter, verifiedFilter, btOnlyFilter, btAmountRange, pendingFilter, btSort]);
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -259,16 +270,23 @@ export default function MyMerchants() {
                 style={{ height: 38, borderRadius: 8, border: `1.5px solid ${pendingFilter === 'rp-left' ? '#6b21a8' : '#e2e8f0'}`, background: pendingFilter === 'rp-left' ? '#f3e8ff' : '#fff', color: pendingFilter === 'rp-left' ? '#6b21a8' : '#64748b', fontSize: 12, padding: '0 12px', cursor: 'pointer', fontWeight: pendingFilter === 'rp-left' ? 700 : 400 }}>
                 🎁 RP Left
               </button>
-              {(search || statusFilter || verifiedFilter || btAmountRange || btOnlyFilter || pendingFilter) && (
-                <button onClick={() => { setSearch(''); setStatusFilter(''); setVerifiedFilter(''); setBtAmountRange(''); setBtOnlyFilter(false); setPendingFilter(''); }}
+              {/* BT Sort dropdown */}
+              <select value={btSort} onChange={e => setBtSort(e.target.value)}
+                style={{ height: 38, borderRadius: 8, border: `1.5px solid ${btSort ? '#1a4731' : '#e2e8f0'}`, fontSize: 13, padding: '0 10px', background: btSort ? '#f0fdf4' : '#fff', color: btSort ? '#1a4731' : '#64748b', fontWeight: btSort ? 700 : 400, outline: 'none', cursor: 'pointer' }}>
+                <option value="">Sort by BT</option>
+                <option value="desc">💰 BT High → Low</option>
+                <option value="asc">💸 BT Low → High</option>
+              </select>
+              {(search || statusFilter || verifiedFilter || btAmountRange || btOnlyFilter || pendingFilter || btSort) && (
+                <button onClick={() => { setSearch(''); setStatusFilter(''); setVerifiedFilter(''); setBtAmountRange(''); setBtOnlyFilter(false); setPendingFilter(''); setBtSort(''); }}
                   style={{ height: 38, borderRadius: 8, border: '1.5px solid #e2e8f0', background: '#fff', fontSize: 13, padding: '0 14px', cursor: 'pointer', color: '#b91c1c' }}>
                   ✕ Clear Filters
                 </button>
               )}
             </div>
-            {filtered.length !== merchants.length && (
+            {sortedFiltered.length !== merchants.length && (
               <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-light)' }}>
-                Showing {filtered.length} of {merchants.length} merchants
+                Showing {sortedFiltered.length} of {merchants.length} merchants
               </div>
             )}
           </div>
@@ -384,6 +402,22 @@ export default function MyMerchants() {
                           <span style={{ fontSize: 9, background: m.upiAmount > 0 ? '#e0f2fe' : '#f1f5f9', color: m.upiAmount > 0 ? '#0369a1' : '#64748b', padding: '2px 8px', borderRadius: 6, fontWeight: 700, border: m.upiAmount > 0 ? '1px solid #0369a120' : '1px solid #e2e8f0' }}>
                             UPI Amt: ₹{(m.upiAmount || 0).toLocaleString()}
                           </span>
+
+                          {/* UPI % of BT */}
+                          {(() => {
+                            const bt  = parseFloat(String(m.stage3   || '0').replace(/,/g, '')) || 0;
+                            const upi = parseFloat(String(m.upiAmount || '0').replace(/,/g, '')) || 0;
+                            if (!bt || !upi) return null;
+                            const pct = Math.round((upi / bt) * 100);
+                            const color = pct >= 80 ? '#15803d' : pct >= 50 ? '#0369a1' : '#c2410c';
+                            const bg    = pct >= 80 ? '#d8f3dc' : pct >= 50 ? '#e0f2fe' : '#ffedd5';
+                            const border = pct >= 80 ? '#15803d20' : pct >= 50 ? '#0369a120' : '#c2410c20';
+                            return (
+                              <span style={{ fontSize: 9, background: bg, color, padding: '2px 8px', borderRadius: 6, fontWeight: 700, border: `1px solid ${border}` }}>
+                                UPI {pct}% of BT
+                              </span>
+                            );
+                          })()}
                         </div>
                       </div>
                     </div>

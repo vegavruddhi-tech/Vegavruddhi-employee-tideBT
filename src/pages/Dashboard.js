@@ -919,7 +919,6 @@ export default function Dashboard() {
             },
             { label: 'Carry Forward', value: `₹${(serverCarryForward !== null ? serverCarryForward : carryForward).toLocaleString()}`, bg: '#e8f5e9', color: '#388e3c', border: '#43a04730', sub: `From ${prevMonthData.prevMonthName}` },
             { label: 'Total Available', value: `₹${totalAvailable.toLocaleString()}`,   bg: '#f1f8e9', color: '#1b5e20', border: '#2e7d3240', sub: 'This Month + Carry' },
-            { label: 'BT',             value: `₹${fundUsedBT.toLocaleString()}`,         bg: '#fff3e0', color: '#e65100', border: '#e6510030', sub: 'Used' },
             { label: `RP ${totalRPCount}×₹2,500`, value: `₹${fundUsedRP.toLocaleString()}`, bg: '#ede9fe', color: '#7c3aed', border: '#7c3aed30', sub: 'Used' },
             { label: 'BT Fee (1.5%)', value: `₹${fee.toLocaleString()}`,                 bg: '#fce4ec', color: '#c62828', border: '#c6282830', sub: 'Deducted' },
             { label: 'Total Used',    value: `₹${totalUsed.toLocaleString()}`,            bg: '#fff3e0', color: '#ff6f00', border: '#ff980030', sub: 'RP + Fee + Withdraw' },
