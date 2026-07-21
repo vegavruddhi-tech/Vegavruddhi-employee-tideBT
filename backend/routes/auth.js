@@ -966,17 +966,25 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
       return res.json(result);
     }
 
-    // Get merchant numbers from bt_master ONLY — same source as admin panel and TL panel.
-    // Also try first word of name as fallback (e.g. "Vikki Kumar" → also try "Vikki")
-    // because bt_master stores names as entered in sheet — may be short name only.
+    // Get merchant numbers from bt_master + TideBT Form Responses
+    // Same sources as TL portal — bt_master with first-word fallback + form responses
     const firstWord = empName.split(' ')[0];
     const masterDocs = await db.collection('bt_master').find({
       $or: [
         { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
         { fseName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*\\d*\\s*$`, 'i') } },
-        // Fallback: first word match (handles "Vikki Kumar" → "Vikki" in bt_master)
         ...(firstWord !== empName ? [{ fseName: { $regex: new RegExp(`^\\s*${escape(firstWord)}\\s*\\d*\\s*$`, 'i') } }] : [])
       ]
+    }).project({ merchantNumber: 1 }).toArray();
+
+    // Also include TideBT Form Responses merchants (same as TL portal)
+    const formDocs = await db.collection('TideBT Form Responses').find({
+      $or: [
+        { employeeEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
+        { employeeName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*\\d*\\s*$`, 'i') } },
+        ...(firstWord !== empName ? [{ employeeName: { $regex: new RegExp(`^\\s*${escape(firstWord)}\\s*\\d*\\s*$`, 'i') } }] : [])
+      ],
+      merchantNumber: { $exists: true, $ne: '' }
     }).project({ merchantNumber: 1 }).toArray();
 
     const merchantDocs      = [];
@@ -985,7 +993,8 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
     const mobikwikFormDocs  = [];
 
     const merchantNumbers = [...new Set([
-      ...masterDocs.map(m => (m.merchantNumber || '').trim())
+      ...masterDocs.map(m => (m.merchantNumber || '').trim()),
+      ...formDocs.map(m => (m.merchantNumber || '').trim())
     ].filter(Boolean))];
 
     if (merchantNumbers.length === 0) {
