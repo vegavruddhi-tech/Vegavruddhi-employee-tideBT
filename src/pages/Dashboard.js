@@ -241,7 +241,7 @@ export default function Dashboard() {
   }, [receivedPayments, prevBtPerf, annualBtSummary, myForms, selectedMonth, selectedYear]);
 
   const totalAvailable    = totalFund + (serverCarryForward !== null ? serverCarryForward : carryForward);
-  const fundLeftWithCarry = totalAvailable - totalUsed;
+  const fundLeftWithCarry = totalAvailable - totalDeduction - totalUsed;
 
   // Helper to format a Date to YYYY-MM-DD local string
   const toLocalDateStr = (d) =>
