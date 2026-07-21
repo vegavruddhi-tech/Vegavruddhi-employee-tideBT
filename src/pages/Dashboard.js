@@ -112,7 +112,10 @@ export default function Dashboard() {
 
   // ── KPI calculations ──────────────────────────────────────────────────────
   // All calculations use filtered data — month-wise consistent
-  const totalFund    = useMemo(() => filteredPayments.reduce((s, p) => s + (p.amount || 0), 0), [filteredPayments]);
+  // totalFund = positive payments only (what was actually given)
+  // deduction = absolute value of negative payments (minus fund / fund returned)
+  const totalFund    = useMemo(() => filteredPayments.filter(p => (p.amount || 0) > 0).reduce((s, p) => s + (p.amount || 0), 0), [filteredPayments]);
+  const totalDeduction = useMemo(() => filteredPayments.filter(p => (p.amount || 0) < 0).reduce((s, p) => s + Math.abs(p.amount || 0), 0), [filteredPayments]);
   // Use btPerf (BT_TL_CONNECT MAY) when available, fallback to TideBT_RewardPass
   const fundUsedBT   = useMemo(() => btPerf ? (btPerf.btAmount || 0) : filteredRewardPass.reduce((s, r) => s + (r.totalBTAmount || 0), 0), [filteredRewardPass, btPerf]);
   const totalRPCount = useMemo(() => btPerf ? (btPerf.rewardPassCount || 0) : filteredRewardPass.reduce((s, r) => s + (r.totalRPCount || 0), 0), [filteredRewardPass, btPerf]);
@@ -123,7 +126,7 @@ export default function Dashboard() {
   const withdrawFees   = Math.round(withdrawAmount * 0.03 * 100) / 100; // 3% withdraw fee
 
   const totalUsed = fundUsedRP + fee + withdrawFees;
-  const fundLeft  = totalFund - totalUsed;
+  const fundLeft  = totalFund - totalDeduction - totalUsed;
 
   // ── Previous month carry-forward — uses prevBtPerf API for accurate BT/RP ──
   const prevMonthData = useMemo(() => {
@@ -141,10 +144,15 @@ export default function Dashboard() {
       return d.getFullYear() === prevYear && d.getMonth() === prevMonthIdx;
     };
 
-    // Fund received in prev month
+    // Fund received in prev month — positive only
     const prevReceived = (Array.isArray(receivedPayments) ? receivedPayments : [])
-      .filter(p => isInPrevMonth(p.createdAt))
+      .filter(p => isInPrevMonth(p.createdAt) && (p.amount || 0) > 0)
       .reduce((s, p) => s + (p.amount || 0), 0);
+
+    // Fund deducted in prev month — minus fund entries
+    const prevDeducted = (Array.isArray(receivedPayments) ? receivedPayments : [])
+      .filter(p => isInPrevMonth(p.createdAt) && (p.amount || 0) < 0)
+      .reduce((s, p) => s + Math.abs(p.amount || 0), 0);
 
     // BT & RP from prevBtPerf API — accurate, same source as current month
     const prevBT      = prevBtPerf ? (prevBtPerf.btAmount       || 0) : 0;
@@ -159,7 +167,7 @@ export default function Dashboard() {
     const prevWithdrawFees = Math.round(prevWithdraw * 0.03 * 100) / 100;
 
     const prevTotalUsed = prevRP + prevFee + prevWithdrawFees;
-    const prevFundLeft  = prevReceived - prevTotalUsed;
+    const prevFundLeft  = prevReceived - prevDeducted - prevTotalUsed;
 
     return { prevMonthName, prevYear, prevReceived, prevBT, prevRPCount, prevRP, prevFee, prevWithdraw, prevTotalUsed, prevFundLeft };
   }, [receivedPayments, prevBtPerf, myForms, selectedMonth, selectedYear]);
@@ -182,14 +190,22 @@ export default function Dashboard() {
     let runningBalance = 0;
 
     pastMonths.forEach(monthName => {
-      // Net received this month (positive = received fund, negative = returned fund to admin)
+      // Net received this month — split into positive (received) and negative (deducted)
       const monthReceived = (Array.isArray(receivedPayments) ? receivedPayments : [])
         .filter(p => {
-          if (!p.createdAt) return false;
+          if (!p.createdAt || (p.amount || 0) <= 0) return false;
           const d = new Date(p.createdAt);
           return d.getFullYear() === curYear && MONTH_NAMES[d.getMonth()] === monthName;
         })
         .reduce((s, p) => s + (p.amount || 0), 0);
+
+      const monthDeducted = (Array.isArray(receivedPayments) ? receivedPayments : [])
+        .filter(p => {
+          if (!p.createdAt || (p.amount || 0) >= 0) return false;
+          const d = new Date(p.createdAt);
+          return d.getFullYear() === curYear && MONTH_NAMES[d.getMonth()] === monthName;
+        })
+        .reduce((s, p) => s + Math.abs(p.amount || 0), 0);
 
       // Get BT/RP costs for this month
       let monthBT = 0, monthRP = 0;
@@ -216,9 +232,9 @@ export default function Dashboard() {
 
       const monthUsed = monthRPCost + monthFee + monthWithdrawFees;
 
-      // Net = received (can be negative if returned) minus used costs
+      // Net = received - deducted - used costs
       // Running balance accumulates — clamp to 0 (can't carry negative)
-      runningBalance = Math.max(0, runningBalance + monthReceived - monthUsed);
+      runningBalance = Math.max(0, runningBalance + monthReceived - monthDeducted - monthUsed);
     });
 
     return runningBalance;
