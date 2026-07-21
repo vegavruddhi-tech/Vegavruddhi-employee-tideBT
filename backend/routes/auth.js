@@ -384,12 +384,15 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
       accessByEmail.forEach(r => { if (r.fseName) nameSet.add(r.fseName.trim()); });
     }
 
-    // Also try first word name match in TideBT_Access
-    const firstWord = empName.split(' ')[0];
-    const accessRecords = await db.collection('TideBT_Access').find({
-      fseName: { $regex: new RegExp(firstWord, 'i') }
-    }).toArray();
-    accessRecords.forEach(r => { if (r.fseName) nameSet.add(r.fseName.trim()); });
+    // Also try first word name match in TideBT_Access — ONLY if email lookup found nothing
+    // Use exact word-boundary match to avoid "Vikki" matching "Vikki Kumar"
+    if (nameSet.size <= 1) {
+      const escape2 = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const accessRecords = await db.collection('TideBT_Access').find({
+        fseName: { $regex: new RegExp(`^\\s*${escape2(empName)}\\s*$`, 'i') }
+      }).toArray();
+      accessRecords.forEach(r => { if (r.fseName) nameSet.add(r.fseName.trim()); });
+    }
 
     if (empEmail) {
       const adminEmp = await db.collection('Employees').findOne({
@@ -402,15 +405,18 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
     }
 
     const nameArray = [...nameSet];
+    const escapeN = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     const payments = await TideBTPayments.find({
       $and: [
         {
+          // Exact boundary match — "Vikki" should not match "Vikki Kumar"
           $or: nameArray.map(n => ({
-            transferTo: { $regex: new RegExp(n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }
+            transferTo: { $regex: new RegExp(`^\\s*${escapeN(n)}\\s*$`, 'i') }
           }))
         },
-        { transferToWhom: { $not: { $regex: /^TL'?s\s*&\s*Managers$/i } } }
+        // Only count FSE Ground Team type payments — same as admin panel
+        { transferToWhom: "FSE Ground Team" }
       ]
     }).sort({ createdAt: -1 }).toArray();
 
@@ -960,63 +966,25 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
       return res.json(result);
     }
 
-    // Get merchant numbers from 5 sources:
-    // 1. bt_master (PRIMARY — all merchants assigned to this FSE)
-    // 2. TideBT_Merchants (legacy synced master list)
-    // 3. TideBT Form Responses (sheet-synced onboarding forms)
-    // 4. tidebt_form_responses (app-submitted daily-visit forms)
-    // 5. TideBT_Mobikwik (Mobikwik withdrawals)
-    const [masterDocs, merchantDocs, sheetFormDocs, appFormDocs, mobikwikFormDocs] = await Promise.all([
-      // bt_master — primary source (has all assigned merchants even with no forms)
+    // Get merchant numbers from bt_master ONLY — same source as admin panel and TL panel.
+    // Using multiple sources (forms, mobikwik) inflates the merchant count and causes
+    // BT/RP numbers to differ from admin and TL portals.
+    const [masterDocs] = await Promise.all([
       db.collection('bt_master').find({
         $or: [
           { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
           { fseName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*\\d*\\s*$`, 'i') } }
         ]
-      }).project({ merchantNumber: 1 }).toArray(),
-
-      db.collection('TideBT_Merchants').find({
-        $or: [
-          { employeeEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
-          { employeeName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*$`, 'i') } }
-        ]
-      }).project({ merchantNumber: 1 }).toArray(),
-
-      // Sheet-synced forms — match by email or name (handles name variations like "Pankaj Kumar1")
-      db.collection('TideBT Form Responses').find({
-        $or: [
-          { employeeEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
-          { employeeName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*\\d*\\s*$`, 'i') } }
-        ],
-        merchantNumber: { $exists: true, $ne: '' }
-      }).project({ merchantNumber: 1 }).toArray(),
-
-      // App-submitted forms
-      db.collection('tidebt_form_responses').find({
-        $or: [
-          { submittedBy: employee._id },
-          { employeeEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } }
-        ],
-        formType: 'daily-visit',
-        merchantNumber: { $exists: true, $ne: '' }
-      }).project({ merchantNumber: 1 }).toArray(),
-
-      // Mobikwik forms
-      db.collection('TideBT_Mobikwik').find({
-        $or: [
-          { employeeEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
-          { employeeName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*\\d*\\s*$`, 'i') } }
-        ],
-        merchantNumber: { $exists: true, $ne: '' }
       }).project({ merchantNumber: 1 }).toArray()
     ]);
 
+    const merchantDocs      = [];
+    const sheetFormDocs     = [];
+    const appFormDocs       = [];
+    const mobikwikFormDocs  = [];
+
     const merchantNumbers = [...new Set([
-      ...masterDocs.map(m => (m.merchantNumber || '').trim()),
-      ...merchantDocs.map(m => (m.merchantNumber || '').trim()),
-      ...sheetFormDocs.map(m => (m.merchantNumber || '').trim()),
-      ...appFormDocs.map(m => (m.merchantNumber || '').trim()),
-      ...mobikwikFormDocs.map(m => (m.merchantNumber || '').trim())
+      ...masterDocs.map(m => (m.merchantNumber || '').trim())
     ].filter(Boolean))];
 
     if (merchantNumbers.length === 0) {
