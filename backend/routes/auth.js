@@ -967,16 +967,17 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
     }
 
     // Get merchant numbers from bt_master ONLY — same source as admin panel and TL panel.
-    // Using multiple sources (forms, mobikwik) inflates the merchant count and causes
-    // BT/RP numbers to differ from admin and TL portals.
-    const [masterDocs] = await Promise.all([
-      db.collection('bt_master').find({
-        $or: [
-          { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
-          { fseName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*\\d*\\s*$`, 'i') } }
-        ]
-      }).project({ merchantNumber: 1 }).toArray()
-    ]);
+    // Also try first word of name as fallback (e.g. "Vikki Kumar" → also try "Vikki")
+    // because bt_master stores names as entered in sheet — may be short name only.
+    const firstWord = empName.split(' ')[0];
+    const masterDocs = await db.collection('bt_master').find({
+      $or: [
+        { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
+        { fseName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*\\d*\\s*$`, 'i') } },
+        // Fallback: first word match (handles "Vikki Kumar" → "Vikki" in bt_master)
+        ...(firstWord !== empName ? [{ fseName: { $regex: new RegExp(`^\\s*${escape(firstWord)}\\s*\\d*\\s*$`, 'i') } }] : [])
+      ]
+    }).project({ merchantNumber: 1 }).toArray();
 
     const merchantDocs      = [];
     const sheetFormDocs     = [];
