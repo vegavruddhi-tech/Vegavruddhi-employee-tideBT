@@ -240,8 +240,8 @@ export default function Dashboard() {
     return runningBalance;
   }, [receivedPayments, prevBtPerf, annualBtSummary, myForms, selectedMonth, selectedYear]);
 
-  const totalAvailable    = totalFund + (serverCarryForward !== null ? serverCarryForward : carryForward);
-  const fundLeftWithCarry = totalAvailable - totalDeduction - totalUsed;
+  const totalAvailable    = (totalFund - totalDeduction) + (serverCarryForward !== null ? serverCarryForward : carryForward);
+  const fundLeftWithCarry = totalAvailable - totalUsed;
 
   // Helper to format a Date to YYYY-MM-DD local string
   const toLocalDateStr = (d) =>
@@ -927,11 +927,11 @@ export default function Dashboard() {
           {[
             {
               label: 'This Month',
-              value: `₹${totalFund.toLocaleString()}`,
-              bg: totalFund < 0 ? '#fdecea' : '#e6f4ea',
-              color: totalFund < 0 ? '#c62828' : '#2e7d32',
-              border: totalFund < 0 ? '#c6282830' : '#2e7d3230',
-              sub: totalFund < 0 ? 'Returned to Admin' : 'Net Received'
+              value: `₹${(totalFund - totalDeduction).toLocaleString()}`,
+              bg: '#e6f4ea',
+              color: '#2e7d32',
+              border: '#2e7d3230',
+              sub: 'Net Received'
             },
             { label: 'Carry Forward', value: `₹${(serverCarryForward !== null ? serverCarryForward : carryForward).toLocaleString()}`, bg: '#e8f5e9', color: '#388e3c', border: '#43a04730', sub: `From ${prevMonthData.prevMonthName}` },
             { label: 'Total Available', value: `₹${totalAvailable.toLocaleString()}`,   bg: '#f1f8e9', color: '#1b5e20', border: '#2e7d3240', sub: 'This Month + Carry' },
