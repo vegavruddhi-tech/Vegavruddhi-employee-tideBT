@@ -395,24 +395,28 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.set('Pragma', 'no-cache');
   try {
+    const escapeN = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
     let employee = null;
     try {
       employee = await Employee.findById(req.user.id).select('newJoinerName email newJoinerEmailId');
     } catch {}
 
-    const empEmailReq = (req.user.targetEmail || req.user.email || '').trim();
+    const empEmailReq = (req.user?.targetEmail || req.user?.email || '').trim();
     if (!employee && empEmailReq) {
-      employee = await Employee.findOne({
-        $or: [
-          { email: { $regex: new RegExp(`^${empEmailReq}$`, 'i') } },
-          { newJoinerEmailId: { $regex: new RegExp(`^${empEmailReq}$`, 'i') } }
-        ]
-      }).select('newJoinerName email newJoinerEmailId');
+      try {
+        employee = await Employee.findOne({
+          $or: [
+            { email: { $regex: new RegExp(`^${escapeN(empEmailReq)}$`, 'i') } },
+            { newJoinerEmailId: { $regex: new RegExp(`^${escapeN(empEmailReq)}$`, 'i') } }
+          ]
+        }).select('newJoinerName email newJoinerEmailId');
+      } catch {}
     }
 
     const empName  = (employee?.newJoinerName || 'Rohit Kr').trim();
     const empEmail = (employee?.email || employee?.newJoinerEmailId || empEmailReq || '').trim();
-    const empIdStr = employee?._id ? employee._id.toString() : (req.user.id || 'admin_user');
+    const empIdStr = employee?._id ? employee._id.toString() : (req.user?.id || 'admin_user');
 
     const ck = cacheKey('EMP_PAYMENTS_V6', empIdStr, empEmail);
     const cached = await cacheGet(ck);
@@ -470,7 +474,7 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
         createdAt: p.createdAt || null
       }));
 
-    console.log(`[FSE Payments] FSE: "${empName}", names searched: ${JSON.stringify(searchNames)}, found: ${normalizedPayments.length}`);
+    console.log(`[FSE Payments] FSE: "${empName}", email: "${empEmail}", found: ${normalizedPayments.length}`);
 
     const result = normalizedPayments;
     await cacheSet(ck, result);
