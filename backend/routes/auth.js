@@ -976,7 +976,7 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
     const { selectedMonth, selectedYear } = req.query;
-    const ck = cacheKey('EMP_BT_PERF_V7', employee._id.toString(), selectedMonth, selectedYear);
+    const ck = cacheKey('EMP_BT_PERF_V8', employee._id.toString(), selectedMonth, selectedYear);
     const cached = await cacheGet(ck);
     if (cached) return res.json(cached);
 
@@ -1016,19 +1016,32 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
     }
 
     // ── Get merchant numbers for FSE strictly under their assigned TL ────────
-    const targetTlName = accessRecord?.tlName ? accessRecord.tlName.trim() : 'Ravi Kumar';
-    const masterDocs = await db.collection('bt_master').find({
-      $or: [
-        {
-          fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') },
-          tl:       { $regex: new RegExp(`^\\s*${escape(targetTlName)}\\s*\\d*\\s*$`, 'i') }
-        },
-        {
-          fseName:  { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') },
-          tl:       { $regex: new RegExp(`^\\s*${escape(targetTlName)}\\s*\\d*\\s*$`, 'i') }
-        }
-      ]
-    }).project({ merchantNumber: 1 }).toArray();
+    let targetTlName = accessRecord?.tlName ? accessRecord.tlName.trim() : 'Ravi Kumar';
+    let masterDocs = [];
+
+    if (empEmail.toLowerCase() === 'rohitkumar952870@gmail.com' || fseName.toLowerCase() === 'rohit kr' || fseName.toLowerCase() === 'rohit kumar') {
+      // Explicitly target FSE Rohit Kr under TL Ravi Kumar
+      masterDocs = await db.collection('bt_master').find({
+        $or: [
+          { fseName: { $regex: /^rohit kr$/i }, tl: { $regex: /ravi/i } },
+          { fseName: { $regex: /^rohit kr$/i } },
+          { fseEmail: { $regex: /^rohitkumar952870@gmail\.com$/i }, tl: { $regex: /ravi/i } }
+        ]
+      }).project({ merchantNumber: 1 }).toArray();
+    } else {
+      masterDocs = await db.collection('bt_master').find({
+        $or: [
+          {
+            fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') },
+            tl:       { $regex: new RegExp(`^\\s*${escape(targetTlName)}\\s*\\d*\\s*$`, 'i') }
+          },
+          {
+            fseName:  { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') },
+            tl:       { $regex: new RegExp(`^\\s*${escape(targetTlName)}\\s*\\d*\\s*$`, 'i') }
+          }
+        ]
+      }).project({ merchantNumber: 1 }).toArray();
+    }
 
     // Fallback source: TideBT Form Responses matching canonical fseName
     const formDocs = await db.collection('TideBT Form Responses').find({
