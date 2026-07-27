@@ -398,9 +398,9 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
     const employee = await Employee.findById(req.user.id).select('newJoinerName email newJoinerEmailId');
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
-    const ck = cacheKey('EMP_PAYMENTS_V5', employee._id.toString());
+    const ck = cacheKey('EMP_PAYMENTS_V6', employee._id.toString(), empEmail);
     const cached = await cacheGet(ck);
-    if (cached) return res.json(cached);
+    if (cached && Array.isArray(cached) && cached.length > 0) return res.json(cached);
 
     const db = mongoose.connection.db;
     const TideBTPayments = db.collection('TideBT_Payments');
@@ -429,7 +429,11 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
         { transferTo: { $regex: new RegExp(`^\\s*${escapeN(fseName)}\\s*$`, 'i') } },
         { transferTo: { $regex: new RegExp(`^\\s*${escapeN(empName)}\\s*$`, 'i') } },
         { fseName:    { $regex: new RegExp(`^\\s*${escapeN(fseName)}\\s*$`, 'i') } },
-        ...(empEmail ? [{ fseEmail: { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } }] : [])
+        { fseName:    { $regex: new RegExp(`^\\s*${escapeN(empName)}\\s*$`, 'i') } },
+        ...(empEmail ? [
+          { fseEmail:   { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } },
+          { transferTo: { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } }
+        ] : [])
       ]
     }).sort({ createdAt: -1 }).toArray();
 
@@ -437,17 +441,10 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
     const normalizedPayments = payments
       .filter(p => {
         const pWhom   = (p.transferToWhom || '').trim();
-        const pEmail  = (p.fseEmail || '').toLowerCase().trim();
         const pSender = (p.senderName || p.tlName || p.tl || '').toLowerCase().trim();
 
         // Exclude TL-role payments
         if (pWhom === "TL's & Managers") return false;
-
-        // If email matches FSE email explicitly, keep
-        if (empEmail && pEmail === empEmail) return true;
-
-        // If payment sender or TL matches assigned TL (e.g. "Ravi Kumar"), keep
-        if (pSender.includes(tlFirstWord)) return true;
 
         // Exclude payments sent under a different TL (e.g. Dheeraj Anand)
         if (pSender.includes('dheeraj')) return false;
