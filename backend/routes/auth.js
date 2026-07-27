@@ -418,7 +418,7 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
     const empEmail = (employee?.email || employee?.newJoinerEmailId || empEmailReq || '').trim();
     const empIdStr = employee?._id ? employee._id.toString() : (req.user?.id || 'admin_user');
 
-    const ck = cacheKey('EMP_PAYMENTS_V9', empIdStr, empEmail);
+    const ck = cacheKey('EMP_PAYMENTS_V12', empIdStr, empEmail);
     const cached = await cacheGet(ck); // Uses 5-minute TTL auto-expiration from cache.js
     if (cached && Array.isArray(cached) && cached.length > 0) return res.json(cached);
 
@@ -460,24 +460,30 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
       ]
     }).sort({ createdAt: -1 }).toArray();
 
-    // Filter out payments strictly meant for TL role or another TL's team
-    const normalizedPayments = payments
-      .filter(p => {
-        const pWhom   = (p.transferToWhom || '').trim();
-        const pSender = (p.senderName || p.tlName || p.tl || '').toLowerCase().trim();
+    // Filter out payments strictly meant for TL role or another TL's team + deduplicate by amount + date
+    const seenKeys = new Set();
+    const normalizedPayments = [];
 
-        // Exclude TL-role payments
-        if (pWhom === "TL's & Managers") return false;
+    payments.forEach(p => {
+      const pWhom   = (p.transferToWhom || '').trim();
+      const pSender = (p.senderName || p.tlName || p.tl || '').toLowerCase().trim();
 
-        // Exclude payments sent under a different TL (e.g. Dheeraj Anand)
-        if (pSender.includes('dheeraj')) return false;
+      // Exclude TL-role payments or Dheeraj
+      if (pWhom === "TL's & Managers") return;
+      if (pSender.includes('dheeraj')) return;
 
-        return true;
-      })
-      .map(p => ({
-        ...p,
-        createdAt: p.createdAt || null
-      }));
+      const amt = Math.abs(p.amount || 0);
+      const dateStr = p.paymentDoneOn || (p.createdAt ? new Date(p.createdAt).toISOString().split('T')[0] : '');
+      const key = `${amt}_${dateStr}`;
+
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        normalizedPayments.push({
+          ...p,
+          createdAt: p.createdAt || null
+        });
+      }
+    });
 
     console.log(`[FSE Payments] FSE: "${empName}", email: "${empEmail}", found: ${normalizedPayments.length}`);
 
