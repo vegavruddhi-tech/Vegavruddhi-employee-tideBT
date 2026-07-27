@@ -398,7 +398,7 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
     const employee = await Employee.findById(req.user.id).select('newJoinerName email newJoinerEmailId');
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
-    const ck = cacheKey('EMP_PAYMENTS_V2', employee._id.toString());
+    const ck = cacheKey('EMP_PAYMENTS_V3', employee._id.toString());
     const cached = await cacheGet(ck);
     if (cached) return res.json(cached);
 
@@ -413,36 +413,38 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
     let accessRecord = null;
     try {
       accessRecord = await db.collection('TideBT_Access').findOne({
-        fseEmail: { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') }
+        $or: [
+          { fseEmail: { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } },
+          { fseName:  { $regex: new RegExp(`^\\s*${escapeN(empName)}\\s*$`, 'i') } }
+        ]
       });
-      if (!accessRecord) {
-        accessRecord = await db.collection('TideBT_Access').findOne({
-          fseName: { $regex: new RegExp(`^\\s*${escapeN(empName)}\\s*$`, 'i') }
-        });
-      }
       if (accessRecord?.fseName) fseName = accessRecord.fseName.trim();
     } catch {}
 
+    const searchNames = [...new Set([fseName, empName].filter(Boolean))];
+
     const payments = await TideBTPayments.find({
-      $and: [
-        {
-          $or: [
-            ...(empEmail ? [{ fseEmail: { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } }] : []),
-            { transferTo: { $regex: new RegExp(`^\\s*${escapeN(fseName)}\\s*$`, 'i') } },
-            { fseName:    { $regex: new RegExp(`^\\s*${escapeN(fseName)}\\s*$`, 'i') } }
-          ]
-        },
-        // Only count FSE Ground Team type payments — same as admin panel
-        { transferToWhom: "FSE Ground Team" }
+      $or: [
+        ...(empEmail ? [{ fseEmail: { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } }] : []),
+        ...searchNames.map(n => ({ transferTo: { $regex: new RegExp(`^\\s*${escapeN(n)}\\s*$`, 'i') } })),
+        ...searchNames.map(n => ({ fseName:    { $regex: new RegExp(`^\\s*${escapeN(n)}\\s*$`, 'i') } }))
       ]
     }).sort({ createdAt: -1 }).toArray();
 
-    console.log(`[FSE Payments] FSE: "${empName}", names searched: ${JSON.stringify(nameArray)}, found: ${payments.length}`);
+    // Filter out payments meant strictly for TL role of another user
+    const normalizedPayments = payments
+      .filter(p => {
+        if (p.transferToWhom === "TL's & Managers" && p.transferTo !== fseName && p.transferTo !== empName) {
+          return false;
+        }
+        return true;
+      })
+      .map(p => ({
+        ...p,
+        createdAt: p.createdAt || null
+      }));
 
-    const normalizedPayments = payments.map(p => ({
-      ...p,
-      createdAt: p.createdAt || null
-    }));
+    console.log(`[FSE Payments] FSE: "${empName}", names searched: ${JSON.stringify(searchNames)}, found: ${normalizedPayments.length}`);
 
     const result = normalizedPayments;
     await cacheSet(ck, result);
