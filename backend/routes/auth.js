@@ -398,7 +398,7 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
     const employee = await Employee.findById(req.user.id).select('newJoinerName email newJoinerEmailId');
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
-    const ck = cacheKey('EMP_PAYMENTS_V4', employee._id.toString());
+    const ck = cacheKey('EMP_PAYMENTS_V5', employee._id.toString());
     const cached = await cacheGet(ck);
     if (cached) return res.json(cached);
 
@@ -422,30 +422,35 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
     } catch {}
 
     const targetTlName = accessRecord?.tlName ? accessRecord.tlName.trim() : 'Ravi Kumar';
+    const tlFirstWord  = targetTlName.toLowerCase().split(' ')[0];
 
     const payments = await TideBTPayments.find({
       $or: [
         { transferTo: { $regex: new RegExp(`^\\s*${escapeN(fseName)}\\s*$`, 'i') } },
+        { transferTo: { $regex: new RegExp(`^\\s*${escapeN(empName)}\\s*$`, 'i') } },
         { fseName:    { $regex: new RegExp(`^\\s*${escapeN(fseName)}\\s*$`, 'i') } },
         ...(empEmail ? [{ fseEmail: { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } }] : [])
       ]
     }).sort({ createdAt: -1 }).toArray();
 
-    // Filter out payments strictly meant for TL role or another TL's FSE
+    // Filter out payments strictly meant for TL role or another TL's team
     const normalizedPayments = payments
       .filter(p => {
-        const pWhom = (p.transferToWhom || '').trim();
-        const pTo   = (p.transferTo || '').toLowerCase().trim();
-        const pTl   = (p.tlName || p.tl || '').toLowerCase().trim();
+        const pWhom   = (p.transferToWhom || '').trim();
+        const pEmail  = (p.fseEmail || '').toLowerCase().trim();
+        const pSender = (p.senderName || p.tlName || p.tl || '').toLowerCase().trim();
 
-        // Exclude TL-type payments
+        // Exclude TL-role payments
         if (pWhom === "TL's & Managers") return false;
 
-        // If current FSE is "Rohit Kr", exclude payments explicitly sent to "Rohit Kumar"
-        if (fseName.toLowerCase() === 'rohit kr' && pTo === 'rohit kumar') return false;
+        // If email matches FSE email explicitly, keep
+        if (empEmail && pEmail === empEmail) return true;
 
-        // If payment has a TL name attached and it belongs to a different TL (e.g. Dheeraj Anand), exclude
-        if (pTl && targetTlName && !pTl.includes(targetTlName.toLowerCase().split(' ')[0])) return false;
+        // If payment sender or TL matches assigned TL (e.g. "Ravi Kumar"), keep
+        if (pSender.includes(tlFirstWord)) return true;
+
+        // Exclude payments sent under a different TL (e.g. Dheeraj Anand)
+        if (pSender.includes('dheeraj')) return false;
 
         return true;
       })
