@@ -424,7 +424,6 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
 
     const db = mongoose.connection.db;
     const TideBTPayments = db.collection('TideBT_Payments');
-    const escapeN = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     // 1. Resolve access record from TideBT_Access by fseEmail first, or exact fseName
     let fseName = empName;
