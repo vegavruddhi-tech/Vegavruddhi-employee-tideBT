@@ -959,7 +959,7 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
     const { selectedMonth, selectedYear } = req.query;
-    const ck = cacheKey('EMP_BT_PERF_V4', employee._id.toString(), selectedMonth, selectedYear);
+    const ck = cacheKey('EMP_BT_PERF_V5', employee._id.toString(), selectedMonth, selectedYear);
     const cached = await cacheGet(ck);
     if (cached) return res.json(cached);
 
@@ -968,10 +968,11 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
     const empName  = employee.newJoinerName.trim();
     const escape   = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    // Resolve canonical fseName from TideBT_Access by email or name
+    // Resolve canonical fseName & tlName from TideBT_Access by email or name
     let fseName = empName;
+    let accessRecord = null;
     try {
-      const accessRecord = await db.collection('TideBT_Access').findOne({
+      accessRecord = await db.collection('TideBT_Access').findOne({
         $or: [
           { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
           { fseName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*$`, 'i') } }
@@ -993,10 +994,15 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
       return res.json(result);
     }
 
-    // ── Get merchant numbers (exact same query as TL portal) ────────────────
-    // Search bt_master strictly by canonical fseName (e.g. "Vikki")
+    // ── Get merchant numbers for FSE (matched by fseEmail or fseName + tlName) ──
     const masterDocs = await db.collection('bt_master').find({
-      fseName: { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') }
+      $or: [
+        { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
+        {
+          fseName: { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') },
+          ...(accessRecord?.tlName ? [{ tl: { $regex: new RegExp(`^\\s*${escape(accessRecord.tlName)}\\s*\\d*\\s*$`, 'i') } }] : [])
+        }
+      ]
     }).project({ merchantNumber: 1 }).toArray();
 
     // Fallback source: TideBT Form Responses matching canonical fseName
