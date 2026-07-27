@@ -449,6 +449,10 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
           { transferTo: { $regex: /rohit/i } },
           { fseName:    { $regex: /rohit/i } }
         ] : []),
+        ...(fseName.toLowerCase().includes('faisal') ? [
+          { transferTo: { $regex: /faisal/i } },
+          { fseName:    { $regex: /faisal/i } }
+        ] : []),
         ...(empEmail ? [
           { fseEmail:   { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } },
           { transferTo: { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } }
