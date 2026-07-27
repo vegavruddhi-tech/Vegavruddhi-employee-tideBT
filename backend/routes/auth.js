@@ -212,15 +212,16 @@ router.get('/profile', verifyToken, async (req, res) => {
     try {
       const db = mongoose.connection.db;
       const escape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const accessRecords = await db.collection('TideBT_Access').find({
+      const accessRecord = await db.collection('TideBT_Access').findOne({
         $or: [
           { fseEmail: { $regex: new RegExp(`^${escape(employee.email || '')}$`, 'i') } },
           { fseName:  { $regex: new RegExp(`^\\s*${escape(employee.newJoinerName || '')}\\s*$`, 'i') } }
         ]
-      }).toArray();
-      const accessRecord = accessRecords.find(a => a.tlName && a.tlName.toLowerCase().includes('ravi')) ||
-                     accessRecords.find(a => a.fseName && a.fseName.toLowerCase() === 'rohit kr') ||
-                     accessRecords[0];
+      });
+      if (accessRecord?.fseName) {
+        profile.newJoinerName = accessRecord.fseName.trim();
+        profile.name          = accessRecord.fseName.trim();
+      }
       if (accessRecord?.tlName) {
         profile.reportingManager = accessRecord.tlName.trim();
       }
