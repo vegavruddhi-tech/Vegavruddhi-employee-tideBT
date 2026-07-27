@@ -953,6 +953,18 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
     const empName  = employee.newJoinerName.trim();
     const escape   = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+    // Resolve canonical fseName from TideBT_Access by email or name
+    let fseName = empName;
+    try {
+      const accessRecord = await db.collection('TideBT_Access').findOne({
+        $or: [
+          { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
+          { fseName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*$`, 'i') } }
+        ]
+      });
+      if (accessRecord?.fseName) fseName = accessRecord.fseName.trim();
+    } catch (accErr) {}
+
     const collectionName = await findConnectCollection(db, selectedMonth, selectedYear);
 
     if (!collectionName) {
@@ -966,26 +978,40 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
       return res.json(result);
     }
 
-    // Get merchant numbers from bt_master + TideBT Form Responses
-    // Same sources as TL portal — bt_master with first-word fallback + form responses
-    const firstWord = empName.split(' ')[0];
+    // Get merchant numbers from bt_master using canonical fseName & email
+    const firstWord = fseName.split(' ')[0];
     const masterDocs = await db.collection('bt_master').find({
       $or: [
         { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
+        { fseName:  { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') } },
         { fseName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*\\d*\\s*$`, 'i') } },
-        ...(firstWord !== empName ? [{ fseName: { $regex: new RegExp(`^\\s*${escape(firstWord)}\\s*\\d*\\s*$`, 'i') } }] : [])
+        ...(firstWord !== fseName && firstWord !== empName ? [{ fseName: { $regex: new RegExp(`^\\s*${escape(firstWord)}\\s*\\d*\\s*$`, 'i') } }] : [])
       ]
     }).project({ merchantNumber: 1 }).toArray();
 
-    // Also include TideBT Form Responses merchants (same as TL portal)
+    // Include TideBT Form Responses merchants (matching canonical fseName or email)
     const formDocs = await db.collection('TideBT Form Responses').find({
       $or: [
         { employeeEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
-        { employeeName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*\\d*\\s*$`, 'i') } },
-        ...(firstWord !== empName ? [{ employeeName: { $regex: new RegExp(`^\\s*${escape(firstWord)}\\s*\\d*\\s*$`, 'i') } }] : [])
+        { employeeName:  { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') } }
       ],
       merchantNumber: { $exists: true, $ne: '' }
     }).project({ merchantNumber: 1 }).toArray();
+
+    // Filter out form response merchants if they belong to a DIFFERENT FSE in bt_master
+    const formNums = formDocs.map(m => (m.merchantNumber || '').trim()).filter(Boolean);
+    let validFormNums = [];
+    if (formNums.length > 0) {
+      const otherFseMaster = await db.collection('bt_master').find({
+        merchantNumber: { $in: formNums },
+        fseEmail: { $not: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
+        fseName: {
+          $not: { $regex: new RegExp(`^\\s*(${escape(fseName)}|${escape(empName)})\\s*\\d*\\s*$`, 'i') }
+        }
+      }).project({ merchantNumber: 1 }).toArray();
+      const otherNums = new Set(otherFseMaster.map(m => (m.merchantNumber || '').trim()));
+      validFormNums = formNums.filter(n => !otherNums.has(n));
+    }
 
     const merchantDocs      = [];
     const sheetFormDocs     = [];
@@ -994,7 +1020,7 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
 
     const merchantNumbers = [...new Set([
       ...masterDocs.map(m => (m.merchantNumber || '').trim()),
-      ...formDocs.map(m => (m.merchantNumber || '').trim())
+      ...validFormNums
     ].filter(Boolean))];
 
     if (merchantNumbers.length === 0) {
@@ -1088,10 +1114,23 @@ router.get('/tidebt-annual-bt-summary', verifyToken, async (req, res) => {
     const empEmail = employee.email.trim();
     const escape   = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+    // Resolve canonical fseName from TideBT_Access by email or name
+    let fseName = empName;
+    try {
+      const accessRecord = await db.collection('TideBT_Access').findOne({
+        $or: [
+          { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
+          { fseName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*$`, 'i') } }
+        ]
+      });
+      if (accessRecord?.fseName) fseName = accessRecord.fseName.trim();
+    } catch (accErr) {}
+
     // Get current merchant numbers from bt_master (active merchants)
     const masterDocs = await db.collection('bt_master').find({
       $or: [
         { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
+        { fseName:  { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') } },
         { fseName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*\\d*\\s*$`, 'i') } }
       ]
     }).project({ merchantNumber: 1 }).toArray();
@@ -1102,11 +1141,12 @@ router.get('/tidebt-annual-bt-summary', verifyToken, async (req, res) => {
 
     // Build lead name patterns — FSE name shortened forms used in BT_TL_CONNECT collections
     // e.g. "Amit Shukla" → matches "Amit S", "Amit Shukla", "Amit"
-    const nameParts = empName.split(' ').filter(Boolean);
-    const firstName = nameParts[0] || empName;
+    const nameParts = fseName.split(' ').filter(Boolean);
+    const firstName = nameParts[0] || fseName;
     const lastInitial = nameParts[1] ? nameParts[1][0] : '';
-    // Match: full name, first name only, "First L" pattern
+    // Match: canonical name, full name, first name only, "First L" pattern
     const leadPatterns = [
+      new RegExp(`^\\s*${escape(fseName)}\\s*$`, 'i'),
       new RegExp(`^\\s*${escape(empName)}\\s*$`, 'i'),
       new RegExp(`^\\s*${escape(firstName)}\\s*${lastInitial ? escape(lastInitial) : ''}`, 'i'),
       new RegExp(`^\\s*${escape(firstName)}\\s*$`, 'i')
