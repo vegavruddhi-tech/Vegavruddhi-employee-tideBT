@@ -923,27 +923,21 @@ export default function Dashboard() {
           </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 16 }}>
           {[
-            {
-              label: 'This Month',
-              value: `₹${(totalFund - totalDeduction).toLocaleString()}`,
-              bg: '#e6f4ea',
-              color: '#2e7d32',
-              border: '#2e7d3230',
-              sub: 'Net Received'
-            },
+            { label: 'Received Fund', value: `₹${totalFund.toLocaleString()}`,           bg: '#e6f4ea', color: '#2e7d32', border: '#2e7d3230', sub: 'Fund Received' },
+            { label: 'Deducted Fund', value: totalDeduction > 0 ? `−₹${totalDeduction.toLocaleString()}` : '₹0', bg: '#fdecea', color: '#c62828', border: '#c6282830', sub: 'Fund Returned' },
             { label: 'Carry Forward', value: `₹${(serverCarryForward !== null ? serverCarryForward : carryForward).toLocaleString()}`, bg: '#e8f5e9', color: '#388e3c', border: '#43a04730', sub: `From ${prevMonthData.prevMonthName}` },
-            { label: 'Total Available', value: `₹${totalAvailable.toLocaleString()}`,   bg: '#f1f8e9', color: '#1b5e20', border: '#2e7d3240', sub: 'This Month + Carry' },
-            { label: `RP ${totalRPCount}×₹2,500`, value: `₹${fundUsedRP.toLocaleString()}`, bg: '#ede9fe', color: '#7c3aed', border: '#7c3aed30', sub: 'Used' },
-            { label: 'BT Fee (1.5%)', value: `₹${fee.toLocaleString()}`,                 bg: '#fce4ec', color: '#c62828', border: '#c6282830', sub: 'Deducted' },
+            { label: 'Total Available', value: `₹${totalAvailable.toLocaleString()}`,   bg: '#f1f8e9', color: '#1b5e20', border: '#2e7d3240', sub: 'Received − Deducted + Carry' },
+            { label: `RP (${totalRPCount}×₹2,500)`, value: `₹${fundUsedRP.toLocaleString()}`, bg: '#ede9fe', color: '#7c3aed', border: '#7c3aed30', sub: 'Passes Cost' },
+            { label: 'BT Fee (1.5%)', value: `₹${fee.toLocaleString()}`,                 bg: '#fff0f3', color: '#d32f2f', border: '#d32f2f30', sub: '1.5% Fee Cost' },
             { label: 'Total Used',    value: `₹${totalUsed.toLocaleString()}`,            bg: '#fff3e0', color: '#ff6f00', border: '#ff980030', sub: 'RP + Fee + Withdraw' },
             { label: 'Fund Left',     value: `₹${fundLeftWithCarry.toLocaleString()}`,    bg: fundLeftWithCarry >= 0 ? '#e3f2fd' : '#fdecea', color: fundLeftWithCarry >= 0 ? '#1565c0' : '#c62828', border: '#1565c030', sub: 'Available − Used' },
           ].map(card => (
             <div key={card.label} style={{ background: card.bg, borderRadius: 12, padding: '12px 10px', textAlign: 'center', border: `1.5px solid ${card.border}` }}>
-              <div style={{ fontSize: 8, fontWeight: 600, color: '#888', textTransform: 'uppercase', marginBottom: 2 }}>{card.label}</div>
+              <div style={{ fontSize: 9, fontWeight: 700, color: '#666', textTransform: 'uppercase', marginBottom: 2 }}>{card.label}</div>
               <div style={{ fontSize: 14, fontWeight: 800, color: card.color }}>{card.value}</div>
-              {card.sub && <div style={{ fontSize: 8, color: '#aaa', marginTop: 2 }}>{card.sub}</div>}
+              {card.sub && <div style={{ fontSize: 8, color: '#888', marginTop: 2 }}>{card.sub}</div>}
             </div>
           ))}
         </div>
