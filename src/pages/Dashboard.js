@@ -272,17 +272,27 @@ export default function Dashboard() {
       .reduce((s, r) => s + (r.totalBTAmount || 0), 0);
   }, [rewardPassData, dateFilter, toDate]);
 
-  // ── Stale-while-revalidate fetch helper ───────────────────────────────────
-  // Shows cached data from localStorage instantly, then refreshes in background
-  const cachedFetch = useCallback((url, setter, transform, cacheKeyStr) => {
+  // ── 5-Minute Auto-Expiring Cache Fetch Helper ────────────────────────────
+  const cachedFetch = useCallback((url, setter, transform, cacheKeyStr, maxAgeMs = 300000) => {
     const stored = localStorage.getItem(cacheKeyStr);
     if (stored) {
-      try { setter(transform(JSON.parse(stored))); } catch {}
+      try {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === 'object' && parsed._cachedAt) {
+          if (Date.now() - parsed._cachedAt < maxAgeMs) {
+            setter(transform(parsed.data));
+          } else {
+            localStorage.removeItem(cacheKeyStr); // Auto-expire cache after 5 minutes!
+          }
+        } else {
+          setter(transform(parsed));
+        }
+      } catch {}
     }
     fetch(url, { headers: { Authorization: 'Bearer ' + token } })
       .then(r => r.json())
       .then(data => {
-        localStorage.setItem(cacheKeyStr, JSON.stringify(data));
+        try { localStorage.setItem(cacheKeyStr, JSON.stringify({ _cachedAt: Date.now(), data })); } catch {}
         setter(transform(data));
       })
       .catch(() => {});
@@ -322,8 +332,14 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!token) return;
-    cachedFetch(`${PROFILE_API_BASE}/api/auth/tidebt-received-payments`, setReceivedPayments, d => d.payments || d || [], 'ebt_payments_v8');
-  }, [token, cachedFetch]);
+    fetch(`${PROFILE_API_BASE}/api/auth/tidebt-received-payments`, {
+      headers: { Authorization: 'Bearer ' + token },
+      cache: 'no-store'
+    })
+      .then(r => r.json())
+      .then(d => setReceivedPayments(d.payments || d || []))
+      .catch(() => {});
+  }, [token]);
 
   useEffect(() => {
     if (!token) return;

@@ -9,10 +9,19 @@ function getDb() {
   return mongoose.connection.readyState === 1 ? mongoose.connection.db : null;
 }
 
-async function cacheGet(key) {
+async function cacheGet(key, maxAgeMs = 300000) {
   try {
     const db = getDb(); if (!db) return null;
     const doc = await db.collection(CACHE_COLLECTION).findOne({ cacheKey: key });
+    if (doc && doc.updatedAt) {
+      const age = Date.now() - new Date(doc.updatedAt).getTime();
+      if (age < maxAgeMs) {
+        console.log(`⚡ [Cache HIT] ${key} (${Math.round(age/1000)}s old)`);
+        return doc.data;
+      }
+      console.log(`⌛ [Cache EXPIRED] ${key} (${Math.round(age/1000)}s > 300s)`);
+      return null; // Expired after 5 minutes — force fresh MongoDB fetch!
+    }
     if (doc) { console.log(`⚡ [Cache HIT] ${key}`); return doc.data; }
     return null;
   } catch { return null; }

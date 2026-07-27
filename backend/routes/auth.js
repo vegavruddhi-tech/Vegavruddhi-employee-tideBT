@@ -418,10 +418,6 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
     const empEmail = (employee?.email || employee?.newJoinerEmailId || empEmailReq || '').trim();
     const empIdStr = employee?._id ? employee._id.toString() : (req.user?.id || 'admin_user');
 
-    const ck = cacheKey('EMP_PAYMENTS_V8', empIdStr, empEmail);
-    const cached = await cacheGet(ck);
-    if (cached && Array.isArray(cached) && cached.length > 0) return res.json(cached);
-
     const db = mongoose.connection.db;
     const TideBTPayments = db.collection('TideBT_Payments');
 
