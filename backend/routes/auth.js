@@ -418,6 +418,10 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
     const empEmail = (employee?.email || employee?.newJoinerEmailId || empEmailReq || '').trim();
     const empIdStr = employee?._id ? employee._id.toString() : (req.user?.id || 'admin_user');
 
+    const ck = cacheKey('EMP_PAYMENTS_V9', empIdStr, empEmail);
+    const cached = await cacheGet(ck); // Uses 5-minute TTL auto-expiration from cache.js
+    if (cached && Array.isArray(cached) && cached.length > 0) return res.json(cached);
+
     const db = mongoose.connection.db;
     const TideBTPayments = db.collection('TideBT_Payments');
 
@@ -441,8 +445,10 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
       $or: [
         { transferTo: { $regex: new RegExp(`^\\s*${escapeN(fseName)}\\s*$`, 'i') } },
         { fseName:    { $regex: new RegExp(`^\\s*${escapeN(fseName)}\\s*$`, 'i') } },
-        { transferTo: { $regex: /rohit/i } },
-        { fseName:    { $regex: /rohit/i } },
+        ...(fseName.toLowerCase().includes('rohit') ? [
+          { transferTo: { $regex: /rohit/i } },
+          { fseName:    { $regex: /rohit/i } }
+        ] : []),
         ...(empEmail ? [
           { fseEmail:   { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } },
           { transferTo: { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } }
