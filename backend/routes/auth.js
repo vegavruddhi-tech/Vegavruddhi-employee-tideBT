@@ -944,7 +944,7 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
     const { selectedMonth, selectedYear } = req.query;
-    const ck = cacheKey('EMP_BT_PERF_V3', employee._id.toString(), selectedMonth, selectedYear);
+    const ck = cacheKey('EMP_BT_PERF_V4', employee._id.toString(), selectedMonth, selectedYear);
     const cached = await cacheGet(ck);
     if (cached) return res.json(cached);
 
@@ -978,13 +978,10 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
       return res.json(result);
     }
 
-    // ── Get merchant numbers (exact same logic as TL & Admin portals) ─────────
-    // Primary source: bt_master matching canonical fseName or employee email
+    // ── Get merchant numbers (exact same query as TL portal) ────────────────
+    // Search bt_master strictly by canonical fseName (e.g. "Vikki")
     const masterDocs = await db.collection('bt_master').find({
-      $or: [
-        { fseName:  { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') } },
-        { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } }
-      ]
+      fseName: { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') }
     }).project({ merchantNumber: 1 }).toArray();
 
     // Fallback source: TideBT Form Responses matching canonical fseName

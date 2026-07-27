@@ -295,7 +295,7 @@ export default function Dashboard() {
     const curYear = new Date().getFullYear().toString();
     const timer = setTimeout(() => {
       MONTH_NAMES.forEach(month => {
-        const ckBt = `ebt_btperf_v3_${month}_${curYear}`;
+        const ckBt = `ebt_btperf_v4_${month}_${curYear}`;
         if (!localStorage.getItem(ckBt)) {
           const p = new URLSearchParams({ selectedMonth: month, selectedYear: curYear });
           fetch(`${PROFILE_API_BASE}/api/auth/tidebt-bt-performance?${p}`, { headers: { Authorization: 'Bearer ' + token } })
@@ -353,7 +353,7 @@ export default function Dashboard() {
       `${PROFILE_API_BASE}/api/auth/tidebt-bt-performance?${params.toString()}`,
       d => { if (d.success) setBtPerf(d); else setBtPerf(null); },
       d => d,
-      `ebt_btperf_v3_${selectedMonth}_${selectedYear}`
+      `ebt_btperf_v4_${selectedMonth}_${selectedYear}`
     );
 
     // Previous month
@@ -364,7 +364,7 @@ export default function Dashboard() {
       `${PROFILE_API_BASE}/api/auth/tidebt-bt-performance?${prevParams.toString()}`,
       d => { if (d.success) setPrevBtPerf(d); else setPrevBtPerf(null); },
       d => d,
-      `ebt_btperf_v3_${prevMonthName}_${prevYear}`
+      `ebt_btperf_v4_${prevMonthName}_${prevYear}`
     );
 
     // Annual summary
