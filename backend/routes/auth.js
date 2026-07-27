@@ -944,7 +944,7 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
     const { selectedMonth, selectedYear } = req.query;
-    const ck = cacheKey('EMP_BT_PERF', employee._id.toString(), selectedMonth, selectedYear);
+    const ck = cacheKey('EMP_BT_PERF_V2', employee._id.toString(), selectedMonth, selectedYear);
     const cached = await cacheGet(ck);
     if (cached) return res.json(cached);
 
