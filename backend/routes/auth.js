@@ -944,7 +944,7 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
     const { selectedMonth, selectedYear } = req.query;
-    const ck = cacheKey('EMP_BT_PERF_V2', employee._id.toString(), selectedMonth, selectedYear);
+    const ck = cacheKey('EMP_BT_PERF_V3', employee._id.toString(), selectedMonth, selectedYear);
     const cached = await cacheGet(ck);
     if (cached) return res.json(cached);
 
@@ -978,23 +978,18 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
       return res.json(result);
     }
 
-    // Get merchant numbers from bt_master using canonical fseName & email
-    const firstWord = fseName.split(' ')[0];
+    // ── Get merchant numbers (exact same logic as TL & Admin portals) ─────────
+    // Primary source: bt_master matching canonical fseName or employee email
     const masterDocs = await db.collection('bt_master').find({
       $or: [
-        { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
         { fseName:  { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') } },
-        { fseName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*\\d*\\s*$`, 'i') } },
-        ...(firstWord !== fseName && firstWord !== empName ? [{ fseName: { $regex: new RegExp(`^\\s*${escape(firstWord)}\\s*\\d*\\s*$`, 'i') } }] : [])
+        { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } }
       ]
     }).project({ merchantNumber: 1 }).toArray();
 
-    // Include TideBT Form Responses merchants (matching canonical fseName or email)
+    // Fallback source: TideBT Form Responses matching canonical fseName
     const formDocs = await db.collection('TideBT Form Responses').find({
-      $or: [
-        { employeeEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
-        { employeeName:  { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') } }
-      ],
+      employeeName: { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') },
       merchantNumber: { $exists: true, $ne: '' }
     }).project({ merchantNumber: 1 }).toArray();
 
@@ -1004,10 +999,8 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
     if (formNums.length > 0) {
       const otherFseMaster = await db.collection('bt_master').find({
         merchantNumber: { $in: formNums },
-        fseEmail: { $not: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
-        fseName: {
-          $not: { $regex: new RegExp(`^\\s*(${escape(fseName)}|${escape(empName)})\\s*\\d*\\s*$`, 'i') }
-        }
+        fseName: { $not: { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') } },
+        fseEmail: { $not: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } }
       }).project({ merchantNumber: 1 }).toArray();
       const otherNums = new Set(otherFseMaster.map(m => (m.merchantNumber || '').trim()));
       validFormNums = formNums.filter(n => !otherNums.has(n));
