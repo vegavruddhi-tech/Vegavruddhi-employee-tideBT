@@ -397,7 +397,7 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
     const employee = await Employee.findById(req.user.id).select('newJoinerName email newJoinerEmailId');
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
-    const ck = cacheKey('EMP_PAYMENTS', employee._id.toString());
+    const ck = cacheKey('EMP_PAYMENTS_V2', employee._id.toString());
     const cached = await cacheGet(ck);
     if (cached) return res.json(cached);
 
@@ -405,47 +405,31 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
     const TideBTPayments = db.collection('TideBT_Payments');
     const empName = employee.newJoinerName.trim();
     const empEmail = (employee.email || employee.newJoinerEmailId || '').trim();
-
-    const nameSet = new Set([empName]);
-
-    // Look up TideBT_Access by email first (handles name mismatches like FASHAL ALI → Faisal Khan)
-    if (empEmail) {
-      const accessByEmail = await db.collection('TideBT_Access').find({
-        fseEmail: { $regex: new RegExp(`^${empEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
-      }).toArray();
-      accessByEmail.forEach(r => { if (r.fseName) nameSet.add(r.fseName.trim()); });
-    }
-
-    // Also try first word name match in TideBT_Access — ONLY if email lookup found nothing
-    // Use exact word-boundary match to avoid "Vikki" matching "Vikki Kumar"
-    if (nameSet.size <= 1) {
-      const escape2 = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const accessRecords = await db.collection('TideBT_Access').find({
-        fseName: { $regex: new RegExp(`^\\s*${escape2(empName)}\\s*$`, 'i') }
-      }).toArray();
-      accessRecords.forEach(r => { if (r.fseName) nameSet.add(r.fseName.trim()); });
-    }
-
-    if (empEmail) {
-      const adminEmp = await db.collection('Employees').findOne({
-        $or: [
-          { email: { $regex: new RegExp(`^${empEmail}$`, 'i') } },
-          { newJoinerEmailId: { $regex: new RegExp(`^${empEmail}$`, 'i') } }
-        ]
-      });
-      if (adminEmp?.newJoinerName) nameSet.add(adminEmp.newJoinerName.trim());
-    }
-
-    const nameArray = [...nameSet];
     const escapeN = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    // 1. Resolve access record from TideBT_Access by fseEmail first, or exact fseName
+    let fseName = empName;
+    let accessRecord = null;
+    try {
+      accessRecord = await db.collection('TideBT_Access').findOne({
+        fseEmail: { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') }
+      });
+      if (!accessRecord) {
+        accessRecord = await db.collection('TideBT_Access').findOne({
+          fseName: { $regex: new RegExp(`^\\s*${escapeN(empName)}\\s*$`, 'i') }
+        });
+      }
+      if (accessRecord?.fseName) fseName = accessRecord.fseName.trim();
+    } catch {}
 
     const payments = await TideBTPayments.find({
       $and: [
         {
-          // Exact boundary match — "Vikki" should not match "Vikki Kumar"
-          $or: nameArray.map(n => ({
-            transferTo: { $regex: new RegExp(`^\\s*${escapeN(n)}\\s*$`, 'i') }
-          }))
+          $or: [
+            ...(empEmail ? [{ fseEmail: { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } }] : []),
+            { transferTo: { $regex: new RegExp(`^\\s*${escapeN(fseName)}\\s*$`, 'i') } },
+            { fseName:    { $regex: new RegExp(`^\\s*${escapeN(fseName)}\\s*$`, 'i') } }
+          ]
         },
         // Only count FSE Ground Team type payments — same as admin panel
         { transferToWhom: "FSE Ground Team" }
@@ -976,7 +960,7 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
     const { selectedMonth, selectedYear } = req.query;
-    const ck = cacheKey('EMP_BT_PERF_V8', employee._id.toString(), selectedMonth, selectedYear);
+    const ck = cacheKey('EMP_BT_PERF_V9', employee._id.toString(), selectedMonth, selectedYear);
     const cached = await cacheGet(ck);
     if (cached) return res.json(cached);
 
@@ -985,20 +969,18 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
     const empName  = employee.newJoinerName.trim();
     const escape   = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    // Resolve canonical fseName & tlName from TideBT_Access by email or name
+    // 1. Resolve access record by exact email match in TideBT_Access (email-first)
     let fseName = empName;
     let accessRecord = null;
     try {
-      const accessRecords = await db.collection('TideBT_Access').find({
-        $or: [
-          { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
-          { fseName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*$`, 'i') } }
-        ]
-      }).toArray();
-      // If multiple access records share the same email, prioritize the FSE record under an active TL (e.g. "Ravi Kumar")
-      accessRecord = accessRecords.find(a => a.tlName && a.tlName.toLowerCase().includes('ravi')) ||
-                     accessRecords.find(a => a.fseName && a.fseName.toLowerCase() === 'rohit kr') ||
-                     accessRecords[0];
+      accessRecord = await db.collection('TideBT_Access').findOne({
+        fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') }
+      });
+      if (!accessRecord) {
+        accessRecord = await db.collection('TideBT_Access').findOne({
+          fseName: { $regex: new RegExp(`^\\s*${escape(empName)}\\s*$`, 'i') }
+        });
+      }
       if (accessRecord?.fseName) fseName = accessRecord.fseName.trim();
     } catch (accErr) {}
 
@@ -1015,33 +997,20 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
       return res.json(result);
     }
 
-    // ── Get merchant numbers for FSE strictly under their assigned TL ────────
-    let targetTlName = accessRecord?.tlName ? accessRecord.tlName.trim() : 'Ravi Kumar';
-    let masterDocs = [];
-
-    if (empEmail.toLowerCase() === 'rohitkumar952870@gmail.com' || fseName.toLowerCase() === 'rohit kr' || fseName.toLowerCase() === 'rohit kumar') {
-      // Explicitly target FSE Rohit Kr under TL Ravi Kumar
-      masterDocs = await db.collection('bt_master').find({
-        $or: [
-          { fseName: { $regex: /^rohit kr$/i }, tl: { $regex: /ravi/i } },
-          { fseName: { $regex: /^rohit kr$/i } },
-          { fseEmail: { $regex: /^rohitkumar952870@gmail\.com$/i }, tl: { $regex: /ravi/i } }
-        ]
-      }).project({ merchantNumber: 1 }).toArray();
-    } else {
-      masterDocs = await db.collection('bt_master').find({
-        $or: [
-          {
-            fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') },
-            tl:       { $regex: new RegExp(`^\\s*${escape(targetTlName)}\\s*\\d*\\s*$`, 'i') }
-          },
-          {
-            fseName:  { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') },
-            tl:       { $regex: new RegExp(`^\\s*${escape(targetTlName)}\\s*\\d*\\s*$`, 'i') }
-          }
-        ]
-      }).project({ merchantNumber: 1 }).toArray();
-    }
+    // ── Get merchant numbers for FSE strictly by fseEmail AND (fseName + tlName) ──
+    const targetTlName = accessRecord?.tlName ? accessRecord.tlName.trim() : null;
+    const masterDocs = await db.collection('bt_master').find({
+      $or: [
+        ...(targetTlName ? [{
+          fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') },
+          tl:       { $regex: new RegExp(`^\\s*${escape(targetTlName)}\\s*\\d*\\s*$`, 'i') }
+        }] : [{ fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } }]),
+        {
+          fseName:  { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') },
+          ...(targetTlName ? [{ tl: { $regex: new RegExp(`^\\s*${escape(targetTlName)}\\s*\\d*\\s*$`, 'i') } }] : [])
+        }
+      ]
+    }).project({ merchantNumber: 1 }).toArray();
 
     // Fallback source: TideBT Form Responses matching canonical fseName
     const formDocs = await db.collection('TideBT Form Responses').find({
