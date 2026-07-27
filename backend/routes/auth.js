@@ -398,7 +398,7 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
     const employee = await Employee.findById(req.user.id).select('newJoinerName email newJoinerEmailId');
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
-    const ck = cacheKey('EMP_PAYMENTS_V3', employee._id.toString());
+    const ck = cacheKey('EMP_PAYMENTS_V4', employee._id.toString());
     const cached = await cacheGet(ck);
     if (cached) return res.json(cached);
 
@@ -421,22 +421,32 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
       if (accessRecord?.fseName) fseName = accessRecord.fseName.trim();
     } catch {}
 
-    const searchNames = [...new Set([fseName, empName].filter(Boolean))];
+    const targetTlName = accessRecord?.tlName ? accessRecord.tlName.trim() : 'Ravi Kumar';
 
     const payments = await TideBTPayments.find({
       $or: [
-        ...(empEmail ? [{ fseEmail: { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } }] : []),
-        ...searchNames.map(n => ({ transferTo: { $regex: new RegExp(`^\\s*${escapeN(n)}\\s*$`, 'i') } })),
-        ...searchNames.map(n => ({ fseName:    { $regex: new RegExp(`^\\s*${escapeN(n)}\\s*$`, 'i') } }))
+        { transferTo: { $regex: new RegExp(`^\\s*${escapeN(fseName)}\\s*$`, 'i') } },
+        { fseName:    { $regex: new RegExp(`^\\s*${escapeN(fseName)}\\s*$`, 'i') } },
+        ...(empEmail ? [{ fseEmail: { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } }] : [])
       ]
     }).sort({ createdAt: -1 }).toArray();
 
-    // Filter out payments meant strictly for TL role of another user
+    // Filter out payments strictly meant for TL role or another TL's FSE
     const normalizedPayments = payments
       .filter(p => {
-        if (p.transferToWhom === "TL's & Managers" && p.transferTo !== fseName && p.transferTo !== empName) {
-          return false;
-        }
+        const pWhom = (p.transferToWhom || '').trim();
+        const pTo   = (p.transferTo || '').toLowerCase().trim();
+        const pTl   = (p.tlName || p.tl || '').toLowerCase().trim();
+
+        // Exclude TL-type payments
+        if (pWhom === "TL's & Managers") return false;
+
+        // If current FSE is "Rohit Kr", exclude payments explicitly sent to "Rohit Kumar"
+        if (fseName.toLowerCase() === 'rohit kr' && pTo === 'rohit kumar') return false;
+
+        // If payment has a TL name attached and it belongs to a different TL (e.g. Dheeraj Anand), exclude
+        if (pTl && targetTlName && !pTl.includes(targetTlName.toLowerCase().split(' ')[0])) return false;
+
         return true;
       })
       .map(p => ({
