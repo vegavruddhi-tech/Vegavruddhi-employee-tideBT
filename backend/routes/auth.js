@@ -398,14 +398,15 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
     const employee = await Employee.findById(req.user.id).select('newJoinerName email newJoinerEmailId');
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
+    const empName = (employee.newJoinerName || '').trim();
+    const empEmail = (employee.email || employee.newJoinerEmailId || '').trim();
+
     const ck = cacheKey('EMP_PAYMENTS_V6', employee._id.toString(), empEmail);
     const cached = await cacheGet(ck);
     if (cached && Array.isArray(cached) && cached.length > 0) return res.json(cached);
 
     const db = mongoose.connection.db;
     const TideBTPayments = db.collection('TideBT_Payments');
-    const empName = employee.newJoinerName.trim();
-    const empEmail = (employee.email || employee.newJoinerEmailId || '').trim();
     const escapeN = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     // 1. Resolve access record from TideBT_Access by fseEmail first, or exact fseName
