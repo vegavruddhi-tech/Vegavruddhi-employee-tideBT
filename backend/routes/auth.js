@@ -814,17 +814,37 @@ router.get('/tidebt-my-merchants', verifyToken, async (req, res) => {
 
     // ── Cache check ───────────────────────────────────────────────────────
     const { cacheGet, cacheSet, cacheKey } = require('../utils/cache');
-    const ck = cacheKey('EMP_MERCHANTS', empName, selectedMonth, selectedYear);
+    const ck = cacheKey('EMP_MERCHANTS_V2', empName, selectedMonth, selectedYear);
     const cached = await cacheGet(ck);
     if (cached) return res.json(cached);
     // ─────────────────────────────────────────────────────────────────────
 
-    // ── Step 1: Get ALL merchants for this FSE from bt_master ────────────────
-    // Match by fseEmail (most reliable) OR fseName (with digit-suffix tolerance)
+    // 1. Resolve access record from TideBT_Access by fseEmail first, or exact fseName
+    let fseName = empName;
+    let accessRecord = null;
+    try {
+      accessRecord = await db.collection('TideBT_Access').findOne({
+        $or: [
+          { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
+          { fseName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*$`, 'i') } }
+        ]
+      });
+      if (accessRecord?.fseName) fseName = accessRecord.fseName.trim();
+    } catch {}
+
+    const targetTlName = accessRecord?.tlName ? accessRecord.tlName.trim() : null;
+
+    // ── Step 1: Get ALL merchants for this FSE strictly under their TL ────────
     const masterDocs = await db.collection('bt_master').find({
       $or: [
-        { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
-        { fseName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*\\d*\\s*$`, 'i') } }
+        ...(targetTlName ? [{
+          fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') },
+          tl:       { $regex: new RegExp(`^\\s*${escape(targetTlName)}\\s*\\d*\\s*$`, 'i') }
+        }] : [{ fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } }]),
+        {
+          fseName:  { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') },
+          ...(targetTlName ? [{ tl: { $regex: new RegExp(`^\\s*${escape(targetTlName)}\\s*\\d*\\s*$`, 'i') } }] : [])
+        }
       ]
     }).toArray();
 
