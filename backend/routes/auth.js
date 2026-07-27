@@ -208,7 +208,24 @@ router.get('/profile', verifyToken, async (req, res) => {
   try {
     const employee = await Employee.findById(req.user.id).select('-password');
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
-    res.json(employee);
+    const profile = employee.toObject();
+    try {
+      const db = mongoose.connection.db;
+      const escape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const accessRecords = await db.collection('TideBT_Access').find({
+        $or: [
+          { fseEmail: { $regex: new RegExp(`^${escape(employee.email || '')}$`, 'i') } },
+          { fseName:  { $regex: new RegExp(`^\\s*${escape(employee.newJoinerName || '')}\\s*$`, 'i') } }
+        ]
+      }).toArray();
+      const accessRecord = accessRecords.find(a => a.tlName && a.tlName.toLowerCase().includes('ravi')) ||
+                     accessRecords.find(a => a.fseName && a.fseName.toLowerCase() === 'rohit kr') ||
+                     accessRecords[0];
+      if (accessRecord?.tlName) {
+        profile.reportingManager = accessRecord.tlName.trim();
+      }
+    } catch {}
+    res.json(profile);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -959,7 +976,7 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
     const { selectedMonth, selectedYear } = req.query;
-    const ck = cacheKey('EMP_BT_PERF_V6', employee._id.toString(), selectedMonth, selectedYear);
+    const ck = cacheKey('EMP_BT_PERF_V7', employee._id.toString(), selectedMonth, selectedYear);
     const cached = await cacheGet(ck);
     if (cached) return res.json(cached);
 
@@ -978,7 +995,7 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
           { fseName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*$`, 'i') } }
         ]
       }).toArray();
-      // If multiple access records share the same email, prioritize the one under an active TL (e.g. "Ravi Kumar")
+      // If multiple access records share the same email, prioritize the FSE record under an active TL (e.g. "Ravi Kumar")
       accessRecord = accessRecords.find(a => a.tlName && a.tlName.toLowerCase().includes('ravi')) ||
                      accessRecords.find(a => a.fseName && a.fseName.toLowerCase() === 'rohit kr') ||
                      accessRecords[0];
@@ -998,13 +1015,17 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
       return res.json(result);
     }
 
-    // ── Get merchant numbers for FSE (matched by fseEmail or fseName + tlName) ──
+    // ── Get merchant numbers for FSE strictly under their assigned TL ────────
+    const targetTlName = accessRecord?.tlName ? accessRecord.tlName.trim() : 'Ravi Kumar';
     const masterDocs = await db.collection('bt_master').find({
       $or: [
-        { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
         {
-          fseName: { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') },
-          ...(accessRecord?.tlName ? [{ tl: { $regex: new RegExp(`^\\s*${escape(accessRecord.tlName)}\\s*\\d*\\s*$`, 'i') } }] : [])
+          fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') },
+          tl:       { $regex: new RegExp(`^\\s*${escape(targetTlName)}\\s*\\d*\\s*$`, 'i') }
+        },
+        {
+          fseName:  { $regex: new RegExp(`^\\s*${escape(fseName)}\\s*\\d*\\s*$`, 'i') },
+          tl:       { $regex: new RegExp(`^\\s*${escape(targetTlName)}\\s*\\d*\\s*$`, 'i') }
         }
       ]
     }).project({ merchantNumber: 1 }).toArray();
