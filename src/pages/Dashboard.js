@@ -322,7 +322,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!token) return;
-    cachedFetch(`${PROFILE_API_BASE}/api/auth/tidebt-received-payments`, setReceivedPayments, d => d.payments || d || [], 'ebt_payments_v6');
+    cachedFetch(`${PROFILE_API_BASE}/api/auth/tidebt-received-payments`, setReceivedPayments, d => d.payments || d || [], 'ebt_payments_v7');
   }, [token, cachedFetch]);
 
   useEffect(() => {

@@ -418,7 +418,7 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
     const empEmail = (employee?.email || employee?.newJoinerEmailId || empEmailReq || '').trim();
     const empIdStr = employee?._id ? employee._id.toString() : (req.user?.id || 'admin_user');
 
-    const ck = cacheKey('EMP_PAYMENTS_V6', empIdStr, empEmail);
+    const ck = cacheKey('EMP_PAYMENTS_V7', empIdStr, empEmail);
     const cached = await cacheGet(ck);
     if (cached && Array.isArray(cached) && cached.length > 0) return res.json(cached);
 
@@ -444,9 +444,7 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
     const payments = await TideBTPayments.find({
       $or: [
         { transferTo: { $regex: new RegExp(`^\\s*${escapeN(fseName)}\\s*$`, 'i') } },
-        { transferTo: { $regex: new RegExp(`^\\s*${escapeN(empName)}\\s*$`, 'i') } },
         { fseName:    { $regex: new RegExp(`^\\s*${escapeN(fseName)}\\s*$`, 'i') } },
-        { fseName:    { $regex: new RegExp(`^\\s*${escapeN(empName)}\\s*$`, 'i') } },
         ...(empEmail ? [
           { fseEmail:   { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } },
           { transferTo: { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } }
@@ -1309,25 +1307,20 @@ router.get('/tidebt-carry-forward', verifyToken, async (req, res) => {
     const empName = employee.newJoinerName.trim();
     const escape  = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    // Try direct name match
-    let openingRecord = await db.collection('TideBT_OpeningBalances').findOne({
-      name: { $regex: new RegExp(`^\\s*${escape(empName)}\\s*$`, 'i') }
+    // Resolve access record from TideBT_Access by fseEmail FIRST, then fseName
+    const empEmail = (employee.email || employee.newJoinerEmailId || '').trim();
+    const accessRecord = await db.collection('TideBT_Access').findOne({
+      $or: [
+        ...(empEmail ? [{ fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } }] : []),
+        { fseName: { $regex: new RegExp(`^\\s*${escape(empName)}\\s*$`, 'i') } }
+      ]
     });
 
-    // If not found, try via TideBT_Access fseName (handles name mismatches)
-    if (!openingRecord) {
-      const accessRecord = await db.collection('TideBT_Access').findOne({
-        $or: [
-          { fseName: { $regex: new RegExp(`^\\s*${escape(empName)}\\s*$`, 'i') } },
-          { fseEmail: { $regex: new RegExp(`^${(employee.email||'').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } }
-        ]
-      });
-      if (accessRecord?.fseName) {
-        openingRecord = await db.collection('TideBT_OpeningBalances').findOne({
-          name: { $regex: new RegExp(`^\\s*${escape(accessRecord.fseName.trim())}\\s*$`, 'i') }
-        });
-      }
-    }
+    const targetFseName = accessRecord?.fseName?.trim() || empName;
+
+    let openingRecord = await db.collection('TideBT_OpeningBalances').findOne({
+      name: { $regex: new RegExp(`^\\s*${escape(targetFseName)}\\s*$`, 'i') }
+    });
 
     const carryForward = openingRecord ? Math.round(openingRecord.openingBalance || 0) : 0;
     console.log(`[Carry Forward FSE] "${empName}": ₹${carryForward}`);
