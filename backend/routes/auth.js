@@ -959,7 +959,7 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
     const { selectedMonth, selectedYear } = req.query;
-    const ck = cacheKey('EMP_BT_PERF_V5', employee._id.toString(), selectedMonth, selectedYear);
+    const ck = cacheKey('EMP_BT_PERF_V6', employee._id.toString(), selectedMonth, selectedYear);
     const cached = await cacheGet(ck);
     if (cached) return res.json(cached);
 
@@ -972,12 +972,16 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
     let fseName = empName;
     let accessRecord = null;
     try {
-      accessRecord = await db.collection('TideBT_Access').findOne({
+      const accessRecords = await db.collection('TideBT_Access').find({
         $or: [
           { fseEmail: { $regex: new RegExp(`^${escape(empEmail)}$`, 'i') } },
           { fseName:  { $regex: new RegExp(`^\\s*${escape(empName)}\\s*$`, 'i') } }
         ]
-      });
+      }).toArray();
+      // If multiple access records share the same email, prioritize the one under an active TL (e.g. "Ravi Kumar")
+      accessRecord = accessRecords.find(a => a.tlName && a.tlName.toLowerCase().includes('ravi')) ||
+                     accessRecords.find(a => a.fseName && a.fseName.toLowerCase() === 'rohit kr') ||
+                     accessRecords[0];
       if (accessRecord?.fseName) fseName = accessRecord.fseName.trim();
     } catch (accErr) {}
 
