@@ -468,9 +468,7 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
       if (pWhom === "TL's & Managers") return;
       if (pSender.includes('dheeraj')) return;
 
-      const amt = Math.abs(p.amount || 0);
-      const dateStr = p.paymentDoneOn || (p.createdAt ? new Date(p.createdAt).toISOString().split('T')[0] : '');
-      const key = `${amt}_${dateStr}`;
+      const key = p._id ? p._id.toString() : `${p.transferTo}_${p.senderName}_${p.amount}_${p.createdAt || p.paymentDoneOn}`;
 
       if (!seenKeys.has(key)) {
         seenKeys.add(key);
