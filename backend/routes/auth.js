@@ -449,10 +449,6 @@ router.get('/tidebt-received-payments', verifyToken, async (req, res) => {
           { transferTo: { $regex: /rohit/i } },
           { fseName:    { $regex: /rohit/i } }
         ] : []),
-        ...(fseName.toLowerCase().includes('faisal') ? [
-          { transferTo: { $regex: /faisal/i } },
-          { fseName:    { $regex: /faisal/i } }
-        ] : []),
         ...(empEmail ? [
           { fseEmail:   { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } },
           { transferTo: { $regex: new RegExp(`^${escapeN(empEmail)}$`, 'i') } }
@@ -843,13 +839,6 @@ router.get('/tidebt-my-merchants', verifyToken, async (req, res) => {
     const escape   = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const { selectedMonth, selectedYear } = req.query;
 
-    // ── Cache check ───────────────────────────────────────────────────────
-    const { cacheGet, cacheSet, cacheKey } = require('../utils/cache');
-    const ck = cacheKey('EMP_MERCHANTS_V2', empName, selectedMonth, selectedYear);
-    const cached = await cacheGet(ck);
-    if (cached) return res.json(cached);
-    // ─────────────────────────────────────────────────────────────────────
-
     // 1. Resolve access record from TideBT_Access by fseEmail first, or exact fseName
     let fseName = empName;
     let accessRecord = null;
@@ -1024,9 +1013,6 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
     const { selectedMonth, selectedYear } = req.query;
-    const ck = cacheKey('EMP_BT_PERF_V9', employee._id.toString(), selectedMonth, selectedYear);
-    const cached = await cacheGet(ck);
-    if (cached) return res.json(cached);
 
     const db       = mongoose.connection.db;
     const empEmail = employee.email.trim();
