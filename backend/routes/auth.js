@@ -1043,7 +1043,6 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
         rewardPassCount: 0, passLiveCount: 0, totalMerchants: 0,
         merchants: [], collectionUsed: null
       };
-      await cacheSet(ck, result);
       return res.json(result);
     }
 
@@ -1098,7 +1097,6 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
         rewardPassCount: 0, passLiveCount: 0, totalMerchants: 0,
         merchants: [], collectionUsed: collectionName
       };
-      await cacheSet(ck, result);
       return res.json(result);
     }
 
@@ -1156,7 +1154,6 @@ router.get('/tidebt-bt-performance', verifyToken, async (req, res) => {
       rewardPassCount, passLiveCount,
       totalMerchants: merchants.length, merchants
     };
-    await cacheSet(ck, result);
     res.json(result);
   } catch (err) {
     console.error('BT performance error:', err.message);
