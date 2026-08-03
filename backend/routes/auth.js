@@ -1313,8 +1313,14 @@ router.get('/tidebt-carry-forward', verifyToken, async (req, res) => {
 
     const targetFseName = accessRecord?.fseName?.trim() || empName;
 
+    const reqMonth = req.query.selectedMonth || 'July';
+    const reqYr = parseInt(req.query.selectedYear || 2026);
     let openingRecord = await db.collection('TideBT_OpeningBalances').findOne({
-      name: { $regex: new RegExp(`^\\s*${escape(targetFseName)}\\s*$`, 'i') }
+      name: { $regex: new RegExp(`^\\s*${escape(targetFseName)}\\s*$`, 'i') },
+      $or: [
+        { month: reqMonth, year: reqYr },
+        { month: { $exists: false } }
+      ]
     });
 
     const carryForward = openingRecord ? Math.round(openingRecord.openingBalance || 0) : 0;
