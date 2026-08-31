@@ -1,6 +1,23 @@
 # 📱 Vegavruddhi Employee (FSE) Tide BT App
 
-Field Sales Executive (FSE) mobile-first web app for submitting Tide Balance Transfer merchant onboarding applications, Mobikwik withdrawal forms, daily attendance, and merchant visit logs.
+Field Sales Executive (FSE) mobile-first web application for submitting Tide Balance Transfer merchant onboarding applications, Mobikwik withdrawal forms, daily attendance, and merchant visit logs.
+
+---
+
+## 📑 Table of Contents
+- [👤 User Role & Access Level](#-user-role--access-level)
+- [📐 Architecture & Port Mapping](#-architecture--port-mapping)
+- [✨ Features & Functionalities](#-features--functionalities)
+- [🛠️ Tech Stack & Dependencies](#-tech-stack--dependencies)
+- [⚙️ Environment Configuration](#️-environment-configuration)
+- [🚀 Quick Start Guide](#-quick-start-guide)
+
+---
+
+## 👤 User Role & Access Level
+
+- **Target User**: Field Sales Executives (FSEs) and Ground Sales Agents.
+- **Access Scope**: Agent-level submission access. Submit new merchant onboarding applications, log daily attendance, submit Mobikwik withdrawal requests, and record merchant site visits.
 
 ---
 
@@ -14,18 +31,31 @@ Vegavruddhi-employee-tideBT/
 
 | Service | Technology | Port | Base URL |
 | :--- | :--- | :--- | :--- |
-| **Frontend** | React 19, MUI v5, Mobile-optimized Layout | `3004` | `http://localhost:3004` |
+| **Frontend** | React 19, MUI v5, Mobile Layout | `3004` | `http://localhost:3004` |
 | **Backend API** | Express 4, Mongoose 7, Redis, Google Auth | `4001` | `http://localhost:4001` |
 
 ---
 
-## ✨ Key Features
+## ✨ Features & Functionalities
 
-- 🔑 **Google Sign-In & Auth**: Fast, unified SSO authentication standard across Vegavruddhi products.
-- 📝 **Merchant Onboarding Forms**: Direct submission of Tide BT merchant details, document uploads, and validation checks.
-- 💳 **Mobikwik Withdrawal Form**: Dedicated input interface for processing client Mobikwik payout requests.
-- 📍 **Daily Attendance & Visits**: Log daily site visits, geolocation tagging, and field activity updates.
-- 🎯 **FSE Performance Badge**: Compact UI header featuring the green "Tide BT" verification badge.
+### 1. 📱 Mobile-First UI & Fast Navigation
+- Clean Material-UI layout optimized for smartphones and field usage.
+- Prominent green "Tide BT" badge header for quick verification of operational mode.
+
+### 2. 🔑 One-Tap Google SSO Login
+- Integrated Google OAuth Sign-In for instant authentication without needing complex password entry in the field.
+
+### 3. 📝 Merchant Onboarding Form Workflow
+- Step-by-step merchant registration form capturing Business Name, Merchant Name, Phone Number, Bank Details, and Identification (PAN/Aadhaar).
+- File upload fields for store pictures, QR code photos, and verification documents.
+
+### 4. 💳 Mobikwik Withdrawal Form (`MobikwikWithdrawForm.js`)
+- Dedicated input interface to initiate Mobikwik wallet payout requests during merchant onboarding.
+- Automated validation rules to ensure valid phone numbers and withdrawal bounds.
+
+### 5. 📍 Daily Attendance & Site Visit Logs (`DailyVisitForm.js`)
+- Shift start/end check-in capturing exact GPS coordinates.
+- Merchant visit logger to record visit feedback, follow-up dates, and merchant sentiment.
 
 ---
 
@@ -64,4 +94,4 @@ npm start     # Frontend runs on http://localhost:3004
 ---
 
 ## 📄 License
-Internal Proprietary Software – Vegavruddhi Technologies.
+Internal Proprietary Software – Vegavruddhi Technologies. All Rights Reserved.
